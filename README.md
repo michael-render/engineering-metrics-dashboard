@@ -1,13 +1,13 @@
 # Engineering Metrics Dashboard
 
-Automated DORA metrics calculation and reporting using **Render Workflows**. Pulls data from Linear, GitHub, and Slab to generate weekly and monthly executive reports with parallel data fetching.
+Automated DORA metrics calculation and reporting using **[Render Workflows](https://render.com/docs/workflows)**. Pulls data from Linear, GitHub, and Slab to generate weekly and monthly executive reports with parallel data fetching.
 
 ## Render Workflows
 
-This project uses [Render Workflows](https://render.com/docs/workflows) to run data fetching tasks in parallel across separate compute instances. Each `@task` decorated function runs independently, and `asyncio.gather()` coordinates parallel execution.
+This project uses the Render Workflows SDK to run data fetching tasks in parallel across separate compute instances. Each `@task` decorated function runs independently, and `asyncio.gather()` coordinates parallel execution of subtasks.
 
 ```python
-from render_sdk.workflows import task, start
+from render_sdk.workflows import task
 
 @task
 async def fetch_github_deployments(period: dict) -> list[dict]:
@@ -15,12 +15,12 @@ async def fetch_github_deployments(period: dict) -> list[dict]:
     ...
 
 @task
-async def run_metrics_workflow(period_type: str) -> str:
+async def run_metrics_pipeline(period_type: str) -> str:
     """Orchestrates parallel fetch tasks."""
-    # All four fetches run in parallel
+    # All four fetches run IN PARALLEL - each in its own compute instance
     results = await asyncio.gather(
         fetch_github_deployments(period),
-        fetch_github_prs(period),
+        fetch_github_pull_requests(period),
         fetch_linear_incidents(period),
         fetch_slab_postmortems(period),
     )
@@ -45,44 +45,43 @@ This dashboard calculates the four key DORA (DevOps Research and Assessment) met
 │                     Render Workflows                             │
 │                                                                  │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │              run_metrics_workflow (orchestrator)            │ │
+│  │           run_metrics_pipeline (orchestrator)               │ │
 │  └──────────────────────────┬─────────────────────────────────┘ │
 │                             │                                    │
 │              asyncio.gather() - PARALLEL EXECUTION               │
 │     ┌───────────┬───────────┼───────────┬───────────┐           │
-│     ▼           ▼           ▼           ▼           │           │
-│ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐        │           │
-│ │ GitHub │ │ GitHub │ │ Linear │ │  Slab  │        │           │
-│ │Deploys │ │  PRs   │ │Incidents│ │Postmort│        │           │
-│ │ @task  │ │ @task  │ │ @task  │ │ @task  │        │           │
-│ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘        │           │
-│      │          │          │          │             │           │
-│      └──────────┴──────────┴──────────┘             │           │
-│                      │                               │           │
-│         ┌────────────▼────────────┐                 │           │
-│         │ aggregate_and_calculate │                 │           │
-│         │        @task            │                 │           │
-│         └────────────┬────────────┘                 │           │
-│                      │                               │           │
-│         ┌────────────▼────────────┐                 │           │
-│         │ generate_and_send_report│                 │           │
-│         │        @task            │                 │           │
-│         └────────────┬────────────┘                 │           │
-│                      │                               │           │
-│              ┌───────┴───────┐                      │           │
-│              ▼               ▼                      │           │
-│         ┌─────────┐    ┌──────────┐                │           │
-│         │  Slack  │    │ Console  │                │           │
-│         │ Webhook │    │  Output  │                │           │
-│         └─────────┘    └──────────┘                │           │
+│     ▼           ▼           ▼           ▼                       │
+│ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                    │
+│ │ GitHub │ │ GitHub │ │ Linear │ │  Slab  │  ← Each runs in    │
+│ │Deploys │ │  PRs   │ │Incidents│ │Postmort│    its own compute │
+│ │ @task  │ │ @task  │ │ @task  │ │ @task  │    instance         │
+│ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘                    │
+│      └──────────┴──────────┴──────────┘                         │
+│                      │                                           │
+│         ┌────────────▼────────────┐                             │
+│         │   calculate_metrics     │                             │
+│         │        @task            │                             │
+│         └────────────┬────────────┘                             │
+│                      │                                           │
+│         ┌────────────▼────────────┐                             │
+│         │  generate_and_notify    │                             │
+│         │        @task            │                             │
+│         └────────────┬────────────┘                             │
+│                      │                                           │
+│              ┌───────┴───────┐                                  │
+│              ▼               ▼                                  │
+│         ┌─────────┐    ┌──────────┐                            │
+│         │  Slack  │    │ Console  │                            │
+│         │ Webhook │    │  Output  │                            │
+│         └─────────┘    └──────────┘                            │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ## Data Sources
 
-- **GitHub**: Deployments, pull requests, workflow runs
-- **Linear**: Issues, cycles, incidents (tagged issues)
+- **GitHub**: Deployments, pull requests
+- **Linear**: Issues tagged as incidents/bugs
 - **Slab**: Postmortem documents (optional)
 
 ## Setup
@@ -95,104 +94,109 @@ cd engineering-metrics-dashboard
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
+### 2. Deploy the Workflow to Render
 
-Copy `.env.example` to `.env` and fill in your API credentials:
+Render Workflows are created via the Dashboard (not via render.yaml):
 
-```bash
-cp .env.example .env
-```
+1. Go to [Render Dashboard](https://dashboard.render.com) → **New** → **Workflow**
+2. Link this GitHub repository
+3. Configure:
+   - **Language**: Python 3
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python main.py`
+4. Set environment variables:
+   - `LINEAR_API_KEY` - Linear API key
+   - `GITHUB_TOKEN` - GitHub personal access token
+   - `GITHUB_ORG` - GitHub organization name
+   - `SLAB_API_TOKEN` - (optional) Slab API token
+   - `SLAB_TEAM_ID` - (optional) Slab team ID
+   - `SLACK_WEBHOOK_URL` - (optional) Slack webhook
+5. Click **Deploy Workflow**
 
-Required variables:
-- `LINEAR_API_KEY` - Linear API key
-- `GITHUB_TOKEN` - GitHub personal access token with repo access
-- `GITHUB_ORG` - GitHub organization name
+### 3. Run the Workflow
 
-Optional:
-- `SLAB_API_TOKEN` - Slab API token
-- `SLAB_TEAM_ID` - Slab team ID
-- `SLACK_WEBHOOK_URL` - Slack webhook for notifications
+After deployment, you can run the workflow:
 
-### 3. Deploy to Render
+**Via Dashboard:**
+1. Go to your workflow's **Tasks** page
+2. Select `run_metrics_pipeline`
+3. Click **Run Task**
+4. Enter arguments: `["weekly"]` or `["monthly"]`
 
-This project includes a `render.yaml` blueprint for deployment:
-
-1. Connect your GitHub repository to Render
-2. Create a new Blueprint instance
-3. Configure environment variables in the Render dashboard
-4. The workflows will be ready to run
-
-## Usage
-
-### Run Locally
-
-```bash
-# Run weekly report
-REPORT_TYPE=weekly python -m metrics_dashboard.workflow
-
-# Run monthly report
-REPORT_TYPE=monthly python -m metrics_dashboard.workflow
-```
-
-### Programmatic Usage
-
+**Via API/SDK:**
 ```python
-from metrics_dashboard import calculate_dora_metrics, DoraMetrics
-from metrics_dashboard.models import DataFetchResult, MetricsPeriod
+from render_sdk.client import Client
 
-# Create your data
-data = DataFetchResult(
-    deployments=[...],
-    pull_requests=[...],
-    incidents=[...],
-    postmortems=[...],
-)
+async with Client() as client:
+    task_run = await client.workflows.run_task(
+        "engineering-metrics-dashboard/run_metrics_pipeline",
+        ["weekly"]
+    )
+    result = await task_run
+    print(result.output)
+```
 
-period = MetricsPeriod(
-    type="weekly",
-    start_date=start,
-    end_date=end,
-)
+### 4. Schedule Regular Reports (Optional)
 
-# Calculate metrics
-metrics: DoraMetrics = calculate_dora_metrics(data, period)
-print(f"Deployment frequency: {metrics.deployment_frequency.deployments_per_day}/day")
+Deploy the cron jobs from `render.yaml` to trigger the workflow on a schedule:
+
+1. Go to Render Dashboard → **Blueprints**
+2. Connect this repository
+3. Set environment variables:
+   - `RENDER_API_KEY` - Your Render API key
+   - `WORKFLOW_SERVICE_ID` - Your workflow's service slug
+
+## Local Development
+
+Use the [Render CLI](https://render.com/docs/cli) for local testing:
+
+```bash
+# Install Render CLI
+brew install render
+
+# Start local task server
+render workflows dev --start-command "python main.py"
+
+# In another terminal, run a task
+render workflows run run_metrics_pipeline --input '["weekly"]'
 ```
 
 ## Project Structure
 
 ```
 engineering-metrics-dashboard/
+├── main.py                    # Entry point - calls start()
 ├── metrics_dashboard/
-│   ├── __init__.py          # Package exports
-│   ├── models.py             # Pydantic data models
-│   ├── clients.py            # API clients (GitHub, Linear, Slab)
-│   ├── dora.py               # DORA metrics calculation
-│   ├── reports.py            # Report generation & formatting
-│   └── workflow.py           # Render Workflows tasks
-├── tests/
-├── render.yaml               # Render deployment blueprint
+│   ├── __init__.py
+│   ├── tasks.py               # Render Workflow @task definitions
+│   ├── clients.py             # API clients (GitHub, Linear, Slab)
+│   ├── dora.py                # DORA metrics calculation
+│   ├── models.py              # Pydantic data models
+│   └── reports.py             # Report generation
+├── scripts/
+│   └── trigger_workflow.py    # Script to trigger workflow via API
+├── render.yaml                # Cron jobs for scheduled triggers
 ├── requirements.txt
-├── pyproject.toml
-└── README.md
+└── pyproject.toml
 ```
 
-## Render Workflow Tasks
+## Workflow Tasks
 
-| Task | Description | Runs In Parallel |
-|------|-------------|------------------|
-| `fetch_github_deployments` | Fetches deployment data from GitHub | Yes |
-| `fetch_github_prs` | Fetches merged PRs from GitHub | Yes |
-| `fetch_linear_incidents` | Fetches incident issues from Linear | Yes |
-| `fetch_slab_postmortems` | Fetches postmortems from Slab | Yes |
-| `aggregate_and_calculate` | Combines data and calculates metrics | No (waits for fetches) |
-| `generate_and_send_report` | Generates report and sends notifications | No |
+| Task | Description | Parallel |
+|------|-------------|----------|
+| `fetch_github_deployments` | Fetches deployment data from GitHub | ✅ |
+| `fetch_github_pull_requests` | Fetches merged PRs from GitHub | ✅ |
+| `fetch_linear_incidents` | Fetches incident issues from Linear | ✅ |
+| `fetch_slab_postmortems` | Fetches postmortems from Slab | ✅ |
+| `calculate_metrics` | Computes DORA metrics from data | ❌ |
+| `generate_and_notify` | Generates report, sends Slack | ❌ |
+| `run_metrics_pipeline` | **Orchestrator** - coordinates all tasks | - |
 
 ## Customization
 
 ### Custom Incident Labels
 
-Modify `metrics_dashboard/clients.py` to recognize your team's incident labels:
+Edit `metrics_dashboard/clients.py`:
 
 ```python
 async def get_incident_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
@@ -201,9 +205,12 @@ async def get_incident_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
     return [i for i in issues if any(l.lower() in incident_labels for l in i.labels)]
 ```
 
-### Custom Report Sections
+## Resources
 
-Extend `metrics_dashboard/reports.py` to add custom sections to your reports.
+- [Render Workflows Documentation](https://render.com/docs/workflows)
+- [Workflows SDK for Python](https://render.com/docs/workflows-sdk-python)
+- [Your First Workflow Tutorial](https://render.com/docs/workflows-tutorial)
+- [Render Workflows Examples](https://github.com/render-examples/render-workflows-examples)
 
 ## License
 
