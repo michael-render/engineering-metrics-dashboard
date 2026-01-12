@@ -1,17 +1,18 @@
 # Render Blueprint - Engineering Metrics Dashboard
 # https://render.com/docs/blueprint-spec
+# Uses Render Workflows for parallel task execution
 
 services:
-  # Cron job for weekly reports
-  - type: cron
-    name: weekly-metrics-report
-    runtime: node
-    schedule: "0 9 * * 1"  # Every Monday at 9 AM
-    buildCommand: npm install && npm run build
-    startCommand: npm run workflow
+  # Render Workflow for weekly metrics reports
+  - type: worker
+    name: weekly-metrics-workflow
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m metrics_dashboard.workflow
+    plan: starter
     envVars:
-      - key: NODE_ENV
-        value: production
+      - key: PYTHON_VERSION
+        value: "3.11"
       - key: REPORT_TYPE
         value: weekly
       - key: LINEAR_API_KEY
@@ -27,16 +28,16 @@ services:
       - key: SLACK_WEBHOOK_URL
         sync: false
 
-  # Cron job for monthly reports
-  - type: cron
-    name: monthly-metrics-report
-    runtime: node
-    schedule: "0 9 1 * *"  # First day of each month at 9 AM
-    buildCommand: npm install && npm run build
-    startCommand: npm run workflow
+  # Render Workflow for monthly metrics reports
+  - type: worker
+    name: monthly-metrics-workflow
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m metrics_dashboard.workflow
+    plan: starter
     envVars:
-      - key: NODE_ENV
-        value: production
+      - key: PYTHON_VERSION
+        value: "3.11"
       - key: REPORT_TYPE
         value: monthly
       - key: LINEAR_API_KEY
@@ -52,25 +53,16 @@ services:
       - key: SLACK_WEBHOOK_URL
         sync: false
 
-  # Optional: Web dashboard for viewing reports
-  - type: web
-    name: metrics-dashboard-api
-    runtime: node
-    buildCommand: npm install && npm run build
-    startCommand: node dist/server.js
-    healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORT
-        value: 3000
-      - key: LINEAR_API_KEY
-        sync: false
-      - key: GITHUB_TOKEN
-        sync: false
-      - key: GITHUB_ORG
-        sync: false
-      - key: SLAB_API_TOKEN
-        sync: false
-      - key: SLAB_TEAM_ID
-        sync: false
+# Render Workflows configuration
+# Each @task decorated function runs in its own compute instance
+# asyncio.gather() enables parallel execution across tasks
+#
+# Workflow execution pattern:
+# 1. run_metrics_workflow (orchestrator) starts
+# 2. Four fetch tasks run IN PARALLEL:
+#    - fetch_github_deployments
+#    - fetch_github_prs
+#    - fetch_linear_incidents
+#    - fetch_slab_postmortems
+# 3. aggregate_and_calculate receives all results
+# 4. generate_and_send_report produces the final output
