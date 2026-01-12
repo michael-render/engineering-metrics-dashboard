@@ -1,0 +1,76 @@
+# Render Blueprint - Engineering Metrics Dashboard
+# https://render.com/docs/blueprint-spec
+
+services:
+  # Cron job for weekly reports
+  - type: cron
+    name: weekly-metrics-report
+    runtime: node
+    schedule: "0 9 * * 1"  # Every Monday at 9 AM
+    buildCommand: npm install && npm run build
+    startCommand: npm run workflow
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REPORT_TYPE
+        value: weekly
+      - key: LINEAR_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_ORG
+        sync: false
+      - key: SLAB_API_TOKEN
+        sync: false
+      - key: SLAB_TEAM_ID
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+
+  # Cron job for monthly reports
+  - type: cron
+    name: monthly-metrics-report
+    runtime: node
+    schedule: "0 9 1 * *"  # First day of each month at 9 AM
+    buildCommand: npm install && npm run build
+    startCommand: npm run workflow
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REPORT_TYPE
+        value: monthly
+      - key: LINEAR_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_ORG
+        sync: false
+      - key: SLAB_API_TOKEN
+        sync: false
+      - key: SLAB_TEAM_ID
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+
+  # Optional: Web dashboard for viewing reports
+  - type: web
+    name: metrics-dashboard-api
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: node dist/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: LINEAR_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_ORG
+        sync: false
+      - key: SLAB_API_TOKEN
+        sync: false
+      - key: SLAB_TEAM_ID
+        sync: false
