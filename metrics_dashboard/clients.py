@@ -1,7 +1,7 @@
 """API clients for data sources."""
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 import httpx
 
@@ -156,6 +156,15 @@ class LinearClient:
             "Content-Type": "application/json",
         }
 
+    def _format_date(self, dt: datetime) -> str:
+        """Format datetime for Linear API (ISO 8601 with Z suffix)."""
+        # Linear expects format like "2024-01-01T00:00:00.000Z"
+        if dt.tzinfo is not None:
+            # Convert to UTC and format
+            utc_dt = dt.astimezone(timezone.utc)
+            return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
     async def get_completed_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
         """Get issues completed within the period."""
         query = """
@@ -181,8 +190,8 @@ class LinearClient:
         """
 
         variables = {
-            "after": period.start_date.isoformat(),
-            "before": period.end_date.isoformat(),
+            "after": self._format_date(period.start_date),
+            "before": self._format_date(period.end_date),
         }
 
         async with httpx.AsyncClient() as client:
@@ -191,8 +200,22 @@ class LinearClient:
                 headers=self.headers,
                 json={"query": query, "variables": variables},
             )
+
+            # Check for GraphQL errors before raising HTTP errors
+            if response.status_code == 400:
+                error_data = response.json()
+                errors = error_data.get("errors", [])
+                if errors:
+                    error_msg = "; ".join(e.get("message", str(e)) for e in errors)
+                    raise ValueError(f"Linear API error: {error_msg}")
+
             response.raise_for_status()
             data = response.json()
+
+            # Check for GraphQL errors in successful response
+            if "errors" in data:
+                error_msg = "; ".join(e.get("message", str(e)) for e in data["errors"])
+                raise ValueError(f"Linear GraphQL error: {error_msg}")
 
         issues: list[LinearIssue] = []
         for node in data.get("data", {}).get("issues", {}).get("nodes", []):
