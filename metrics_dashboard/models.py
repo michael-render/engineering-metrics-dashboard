@@ -43,16 +43,24 @@ class LeadTime(BaseModel):
 
 
 class ChangeFailureRate(BaseModel):
-    """Change failure rate metric."""
+    """Change failure rate metric.
+
+    Per DORA: The percentage of deployments causing a failure in production
+    that requires remediation (e.g., rollback, hotfix, patch).
+    """
 
     percentage: float
-    failed_deployments: int
+    failed_changes: int  # Number of deployments that caused incidents
     total_deployments: int
     rating: DoraRating
 
 
 class MTTR(BaseModel):
-    """Mean time to recovery metric."""
+    """Mean time to recovery metric.
+
+    Per DORA: How long it takes to restore service when a service incident
+    or a defect that impacts users occurs.
+    """
 
     average_hours: float
     median_hours: float
@@ -92,29 +100,21 @@ class GitHubPullRequest(BaseModel):
     first_commit_at: datetime | None = None
 
 
-class LinearIssue(BaseModel):
-    """Linear issue data."""
+class Incident(BaseModel):
+    """Incident from incident.io.
+
+    Used for Change Failure Rate and MTTR calculations.
+    Only change-related incidents count toward DORA metrics.
+    """
 
     id: str
-    identifier: str
-    title: str
-    state: str
-    created_at: datetime
-    completed_at: datetime | None = None
-    started_at: datetime | None = None
-    cycle_time_hours: float | None = None
-    labels: list[str] = Field(default_factory=list)
-
-
-class SlabPostmortem(BaseModel):
-    """Slab postmortem data."""
-
-    id: str
-    title: str
-    incident_date: datetime
-    resolved_at: datetime
+    name: str
+    status: str  # e.g., "open", "closed", "resolved"
     severity: Literal["critical", "major", "minor"]
-    time_to_resolve_hours: float
+    created_at: datetime
+    resolved_at: datetime | None = None
+    time_to_resolve_hours: float | None = None
+    is_change_related: bool = True  # True if caused by a deployment/change
 
 
 class MetricsReport(BaseModel):
@@ -133,5 +133,4 @@ class DataFetchResult(BaseModel):
 
     deployments: list[GitHubDeployment] = Field(default_factory=list)
     pull_requests: list[GitHubPullRequest] = Field(default_factory=list)
-    incidents: list[LinearIssue] = Field(default_factory=list)
-    postmortems: list[SlabPostmortem] = Field(default_factory=list)
+    incidents: list[Incident] = Field(default_factory=list)  # From incident.io

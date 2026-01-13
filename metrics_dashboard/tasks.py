@@ -12,17 +12,15 @@ from render_sdk.workflows import task
 
 from metrics_dashboard.clients import (
     create_github_client,
-    create_linear_client,
-    create_slab_client,
+    create_incident_io_client,
 )
 from metrics_dashboard.dora import calculate_dora_metrics
 from metrics_dashboard.models import (
     DataFetchResult,
     GitHubDeployment,
     GitHubPullRequest,
-    LinearIssue,
+    Incident,
     MetricsPeriod,
-    SlabPostmortem,
 )
 from metrics_dashboard.reports import (
     format_report_markdown,
@@ -85,7 +83,7 @@ async def fetch_github_deployments(period_dict: dict) -> list[dict]:
     for deps in results:
         all_deployments.extend(deps)
 
-    print(f"[GitHub Deployments] Found {len(all_deployments)} deployments")
+    print(f"[GitHub Deployments] Found {len(all_deployments)} deployments across {len(repos)} repos")
     return [d.model_dump(mode="json") for d in all_deployments]
 
 
@@ -114,46 +112,30 @@ async def fetch_github_pull_requests(period_dict: dict) -> list[dict]:
     for prs in results:
         all_prs.extend(prs)
 
-    print(f"[GitHub PRs] Found {len(all_prs)} merged PRs")
+    print(f"[GitHub PRs] Found {len(all_prs)} merged PRs across {len(repos)} repos")
     return [pr.model_dump(mode="json") for pr in all_prs]
 
 
 @task
-async def fetch_linear_incidents(period_dict: dict) -> list[dict]:
-    """Fetch incident issues from Linear.
+async def fetch_incidents(period_dict: dict) -> list[dict]:
+    """Fetch incidents from incident.io.
 
     Runs in its own compute instance. Called as a subtask from the orchestrator.
+    Only fetches change-related incidents for DORA metrics.
     """
     period = MetricsPeriod(**period_dict)
-    client = create_linear_client()
-
-    print(f"[Linear] Fetching incidents for {period.start_date.date()} to {period.end_date.date()}")
-
-    incidents = await client.get_incident_issues(period)
-
-    print(f"[Linear] Found {len(incidents)} incidents")
-    return [i.model_dump(mode="json") for i in incidents]
-
-
-@task
-async def fetch_slab_postmortems(period_dict: dict) -> list[dict]:
-    """Fetch postmortem documents from Slab.
-
-    Runs in its own compute instance. Called as a subtask from the orchestrator.
-    """
-    period = MetricsPeriod(**period_dict)
-    client = create_slab_client()
+    client = create_incident_io_client()
 
     if not client:
-        print("[Slab] Client not configured, skipping")
+        print("[incident.io] Client not configured, skipping")
         return []
 
-    print(f"[Slab] Fetching postmortems for {period.start_date.date()} to {period.end_date.date()}")
+    print(f"[incident.io] Fetching incidents for {period.start_date.date()} to {period.end_date.date()}")
 
-    postmortems = await client.get_postmortems(period)
+    incidents = await client.get_change_related_incidents(period)
 
-    print(f"[Slab] Found {len(postmortems)} postmortems")
-    return [pm.model_dump(mode="json") for pm in postmortems]
+    print(f"[incident.io] Found {len(incidents)} change-related incidents")
+    return [inc.model_dump(mode="json") for inc in incidents]
 
 
 # =============================================================================
@@ -166,7 +148,6 @@ async def calculate_metrics(
     deployments_json: list[dict],
     prs_json: list[dict],
     incidents_json: list[dict],
-    postmortems_json: list[dict],
     period_dict: dict,
 ) -> dict:
     """Calculate DORA metrics from fetched data.
@@ -180,8 +161,7 @@ async def calculate_metrics(
     data = DataFetchResult(
         deployments=[GitHubDeployment(**d) for d in deployments_json],
         pull_requests=[GitHubPullRequest(**pr) for pr in prs_json],
-        incidents=[LinearIssue(**i) for i in incidents_json],
-        postmortems=[SlabPostmortem(**pm) for pm in postmortems_json],
+        incidents=[Incident(**inc) for inc in incidents_json],
     )
 
     metrics = calculate_dora_metrics(data, period)
@@ -258,16 +238,15 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
     # -------------------------------------------------------------------------
     print("--- Stage 1: Fetching data from all sources in parallel ---")
 
-    deployments_json, prs_json, incidents_json, postmortems_json = await asyncio.gather(
+    deployments_json, prs_json, incidents_json = await asyncio.gather(
         fetch_github_deployments(period_dict),
         fetch_github_pull_requests(period_dict),
-        fetch_linear_incidents(period_dict),
-        fetch_slab_postmortems(period_dict),
+        fetch_incidents(period_dict),
     )
 
     print()
     print(f"Fetched: {len(deployments_json)} deployments, {len(prs_json)} PRs, "
-          f"{len(incidents_json)} incidents, {len(postmortems_json)} postmortems")
+          f"{len(incidents_json)} incidents")
     print()
 
     # -------------------------------------------------------------------------
@@ -279,7 +258,6 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
         deployments_json,
         prs_json,
         incidents_json,
-        postmortems_json,
         period_dict,
     )
 

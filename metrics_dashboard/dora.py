@@ -11,21 +11,23 @@ from metrics_dashboard.models import (
     DoraRating,
     GitHubDeployment,
     GitHubPullRequest,
+    Incident,
     LeadTime,
-    LinearIssue,
     MetricsPeriod,
     MTTR,
-    SlabPostmortem,
 )
 
 
 def calculate_dora_metrics(data: DataFetchResult, period: MetricsPeriod) -> DoraMetrics:
     """Calculate all DORA metrics from fetched data."""
+    # Filter to only change-related incidents for DORA metrics
+    change_incidents = [inc for inc in data.incidents if inc.is_change_related]
+
     return DoraMetrics(
         deployment_frequency=calculate_deployment_frequency(data.deployments, period),
         lead_time=calculate_lead_time(data.pull_requests),
-        change_failure_rate=calculate_change_failure_rate(data.deployments, data.incidents),
-        mttr=calculate_mttr(data.incidents, data.postmortems),
+        change_failure_rate=calculate_change_failure_rate(data.deployments, change_incidents),
+        mttr=calculate_mttr(change_incidents),
         period=period,
         generated_at=datetime.now(),
     )
@@ -111,23 +113,37 @@ def _get_lead_time_rating(median_hours: float) -> DoraRating:
 
 
 def calculate_change_failure_rate(
-    deployments: list[GitHubDeployment], incidents: list[LinearIssue]
+    deployments: list[GitHubDeployment], incidents: list[Incident]
 ) -> ChangeFailureRate:
-    """Calculate change failure rate metric."""
-    successful = len([d for d in deployments if d.status == "success"])
-    failed = len([d for d in deployments if d.status == "failure"])
-    total = successful + failed
+    """Calculate change failure rate metric.
 
-    # Count incidents as additional failures
-    failures = failed + len(incidents)
-    percentage = (failures / total * 100) if total > 0 else 0
+    Per DORA definition: The percentage of deployments causing a failure
+    in production that requires remediation (rollback, hotfix, patch).
+
+    We count incidents from incident.io that are marked as change-related.
+    """
+    successful_deployments = len([d for d in deployments if d.status == "success"])
+    total_deployments = successful_deployments
+
+    if total_deployments == 0:
+        return ChangeFailureRate(
+            percentage=0,
+            failed_changes=0,
+            total_deployments=0,
+            rating=DoraRating.ELITE,
+        )
+
+    # Count change-related incidents as failed changes
+    failed_changes = len(incidents)
+
+    percentage = (failed_changes / total_deployments * 100) if total_deployments > 0 else 0
 
     rating = _get_change_failure_rate_rating(percentage)
 
     return ChangeFailureRate(
         percentage=percentage,
-        failed_deployments=failures,
-        total_deployments=total,
+        failed_changes=failed_changes,
+        total_deployments=total_deployments,
         rating=rating,
     )
 
@@ -143,18 +159,17 @@ def _get_change_failure_rate_rating(percentage: float) -> DoraRating:
     return DoraRating.LOW
 
 
-def calculate_mttr(
-    incidents: list[LinearIssue], postmortems: list[SlabPostmortem]
-) -> MTTR:
-    """Calculate mean time to recovery metric."""
+def calculate_mttr(incidents: list[Incident]) -> MTTR:
+    """Calculate mean time to recovery metric.
+
+    Per DORA definition: How long it takes to restore service when a
+    service incident or defect that impacts users occurs.
+    """
     resolution_times: list[float] = []
 
     for incident in incidents:
-        if incident.cycle_time_hours is not None:
-            resolution_times.append(incident.cycle_time_hours)
-
-    for pm in postmortems:
-        resolution_times.append(pm.time_to_resolve_hours)
+        if incident.time_to_resolve_hours is not None:
+            resolution_times.append(incident.time_to_resolve_hours)
 
     if not resolution_times:
         return MTTR(
@@ -171,7 +186,7 @@ def calculate_mttr(
     return MTTR(
         average_hours=avg,
         median_hours=med,
-        incidents=len(incidents) + len(postmortems),
+        incidents=len(incidents),
         rating=rating,
     )
 

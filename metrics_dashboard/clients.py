@@ -8,9 +8,8 @@ import httpx
 from metrics_dashboard.models import (
     GitHubDeployment,
     GitHubPullRequest,
-    LinearIssue,
+    Incident,
     MetricsPeriod,
-    SlabPostmortem,
 )
 
 
@@ -28,16 +27,34 @@ class GitHubClient:
         }
 
     async def get_repos(self) -> list[str]:
-        """Get all non-archived repos in the organization."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/orgs/{self.org}/repos",
-                headers=self.headers,
-                params={"type": "all", "per_page": 100},
-            )
-            response.raise_for_status()
-            repos = response.json()
-            return [r["name"] for r in repos if not r.get("archived", False)]
+        """Get all non-archived repos in the organization with pagination."""
+        repos: list[str] = []
+        page = 1
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/orgs/{self.org}/repos",
+                    headers=self.headers,
+                    params={"type": "all", "per_page": 100, "page": page},
+                )
+                response.raise_for_status()
+                page_repos = response.json()
+
+                if not page_repos:
+                    break
+
+                repos.extend([r["name"] for r in page_repos if not r.get("archived", False)])
+
+                # Check if there are more pages via Link header
+                link_header = response.headers.get("Link", "")
+                if 'rel="next"' not in link_header:
+                    break
+
+                page += 1
+
+        print(f"[GitHub] Found {len(repos)} repos in {self.org}")
+        return repos
 
     async def get_deployments(
         self, repo: str, period: MetricsPeriod
@@ -45,49 +62,65 @@ class GitHubClient:
         """Get deployments for a repository within the period."""
         deployments: list[GitHubDeployment] = []
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/repos/{self.org}/{repo}/deployments",
-                headers=self.headers,
-                params={"per_page": 100},
-            )
-            response.raise_for_status()
-
-            for dep in response.json():
-                created_at = datetime.fromisoformat(dep["created_at"].replace("Z", "+00:00"))
-
-                if created_at < period.start_date or created_at > period.end_date:
-                    continue
-
-                # Get latest status
-                status_response = await client.get(
-                    f"{self.base_url}/repos/{self.org}/{repo}/deployments/{dep['id']}/statuses",
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Paginate through deployments
+            page = 1
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/repos/{self.org}/{repo}/deployments",
                     headers=self.headers,
-                    params={"per_page": 1},
+                    params={"per_page": 100, "page": page},
                 )
-                status_response.raise_for_status()
-                statuses = status_response.json()
+                response.raise_for_status()
+                page_deployments = response.json()
 
-                status = "pending"
-                if statuses:
-                    state = statuses[0].get("state", "pending")
-                    if state == "success":
-                        status = "success"
-                    elif state in ("failure", "error"):
-                        status = "failure"
-                    elif state in ("in_progress", "queued"):
-                        status = "in_progress"
+                if not page_deployments:
+                    break
 
-                deployments.append(
-                    GitHubDeployment(
-                        id=dep["id"],
-                        sha=dep["sha"],
-                        ref=dep["ref"],
-                        environment=dep["environment"],
-                        created_at=created_at,
-                        status=status,
+                for dep in page_deployments:
+                    created_at = datetime.fromisoformat(dep["created_at"].replace("Z", "+00:00"))
+
+                    # Stop if we've gone past our period
+                    if created_at < period.start_date:
+                        break
+
+                    if created_at > period.end_date:
+                        continue
+
+                    # Get latest status
+                    status_response = await client.get(
+                        f"{self.base_url}/repos/{self.org}/{repo}/deployments/{dep['id']}/statuses",
+                        headers=self.headers,
+                        params={"per_page": 1},
                     )
-                )
+                    status_response.raise_for_status()
+                    statuses = status_response.json()
+
+                    status = "pending"
+                    if statuses:
+                        state = statuses[0].get("state", "pending")
+                        if state == "success":
+                            status = "success"
+                        elif state in ("failure", "error"):
+                            status = "failure"
+                        elif state in ("in_progress", "queued"):
+                            status = "in_progress"
+
+                    deployments.append(
+                        GitHubDeployment(
+                            id=dep["id"],
+                            sha=dep["sha"],
+                            ref=dep["ref"],
+                            environment=dep["environment"],
+                            created_at=created_at,
+                            status=status,
+                        )
+                    )
+
+                # Check if we should continue
+                if 'rel="next"' not in response.headers.get("Link", ""):
+                    break
+                page += 1
 
         return deployments
 
@@ -97,238 +130,235 @@ class GitHubClient:
         """Get merged pull requests for a repository within the period."""
         pull_requests: list[GitHubPullRequest] = []
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{self.base_url}/repos/{self.org}/{repo}/pulls",
-                headers=self.headers,
-                params={"state": "closed", "sort": "updated", "direction": "desc", "per_page": 100},
-            )
-            response.raise_for_status()
-
-            for pr in response.json():
-                if not pr.get("merged_at"):
-                    continue
-
-                merged_at = datetime.fromisoformat(pr["merged_at"].replace("Z", "+00:00"))
-                if merged_at < period.start_date or merged_at > period.end_date:
-                    continue
-
-                created_at = datetime.fromisoformat(pr["created_at"].replace("Z", "+00:00"))
-
-                # Get first commit date
-                commits_response = await client.get(
-                    f"{self.base_url}/repos/{self.org}/{repo}/pulls/{pr['number']}/commits",
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            page = 1
+            while True:
+                response = await client.get(
+                    f"{self.base_url}/repos/{self.org}/{repo}/pulls",
                     headers=self.headers,
-                    params={"per_page": 1},
+                    params={
+                        "state": "closed",
+                        "sort": "updated",
+                        "direction": "desc",
+                        "per_page": 100,
+                        "page": page,
+                    },
                 )
-                commits_response.raise_for_status()
-                commits = commits_response.json()
+                response.raise_for_status()
+                page_prs = response.json()
 
-                first_commit_at = None
-                if commits:
-                    commit_date = commits[0].get("commit", {}).get("committer", {}).get("date")
-                    if commit_date:
-                        first_commit_at = datetime.fromisoformat(
-                            commit_date.replace("Z", "+00:00")
+                if not page_prs:
+                    break
+
+                found_in_period = False
+                for pr in page_prs:
+                    if not pr.get("merged_at"):
+                        continue
+
+                    merged_at = datetime.fromisoformat(pr["merged_at"].replace("Z", "+00:00"))
+
+                    # Skip if before our period
+                    if merged_at < period.start_date:
+                        continue
+
+                    # Skip if after our period
+                    if merged_at > period.end_date:
+                        continue
+
+                    found_in_period = True
+                    created_at = datetime.fromisoformat(pr["created_at"].replace("Z", "+00:00"))
+
+                    # Get first commit date for lead time calculation
+                    first_commit_at = None
+                    try:
+                        commits_response = await client.get(
+                            f"{self.base_url}/repos/{self.org}/{repo}/pulls/{pr['number']}/commits",
+                            headers=self.headers,
+                            params={"per_page": 1},
                         )
+                        commits_response.raise_for_status()
+                        commits = commits_response.json()
 
-                pull_requests.append(
-                    GitHubPullRequest(
-                        number=pr["number"],
-                        title=pr["title"],
-                        created_at=created_at,
-                        merged_at=merged_at,
-                        first_commit_at=first_commit_at,
+                        if commits:
+                            commit_date = commits[0].get("commit", {}).get("committer", {}).get("date")
+                            if commit_date:
+                                first_commit_at = datetime.fromisoformat(
+                                    commit_date.replace("Z", "+00:00")
+                                )
+                    except Exception as e:
+                        print(f"[GitHub] Warning: Could not get commits for PR #{pr['number']}: {e}")
+
+                    pull_requests.append(
+                        GitHubPullRequest(
+                            number=pr["number"],
+                            title=pr["title"],
+                            created_at=created_at,
+                            merged_at=merged_at,
+                            first_commit_at=first_commit_at,
+                        )
                     )
-                )
+
+                # Stop paginating if we're not finding PRs in period anymore
+                if not found_in_period:
+                    break
+
+                if 'rel="next"' not in response.headers.get("Link", ""):
+                    break
+                page += 1
 
         return pull_requests
 
 
-class LinearClient:
-    """Client for Linear API."""
+class IncidentIOClient:
+    """Client for incident.io API.
+
+    Used to fetch incidents for Change Failure Rate and MTTR calculations.
+    Only counts incidents that were caused by changes (deployments).
+    """
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = "https://api.linear.app/graphql"
+        self.base_url = "https://api.incident.io/v2"
         self.headers = {
-            "Authorization": api_key,
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-    def _format_date(self, dt: datetime) -> str:
-        """Format datetime for Linear API (ISO 8601 with Z suffix)."""
-        # Linear expects format like "2024-01-01T00:00:00.000Z"
-        if dt.tzinfo is not None:
-            # Convert to UTC and format
-            utc_dt = dt.astimezone(timezone.utc)
-            return utc_dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        return dt.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    async def get_incidents(self, period: MetricsPeriod) -> list[Incident]:
+        """Get incidents within the period.
 
-    async def get_completed_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
-        """Get issues completed within the period."""
-        # Note: Linear API uses DateTimeOrDuration type for date filters
-        # We pass the dates directly in the filter without variables
-        after_date = self._format_date(period.start_date)
-        before_date = self._format_date(period.end_date)
-
-        query = f"""
-        query CompletedIssues {{
-            issues(
-                filter: {{
-                    completedAt: {{ gte: "{after_date}", lte: "{before_date}" }}
-                }}
-                first: 100
-            ) {{
-                nodes {{
-                    id
-                    identifier
-                    title
-                    createdAt
-                    completedAt
-                    startedAt
-                    state {{ name }}
-                    labels {{ nodes {{ name }} }}
-                }}
-            }}
-        }}
+        For DORA metrics, we're interested in incidents that:
+        - Were caused by a change (deployment)
+        - Have been resolved (so we can calculate MTTR)
         """
+        incidents: list[Incident] = []
 
-        variables = {}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            # Fetch incidents with pagination
+            after_cursor: str | None = None
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                self.base_url,
-                headers=self.headers,
-                json={"query": query, "variables": variables},
-            )
+            while True:
+                params: dict = {"page_size": 100}
+                if after_cursor:
+                    params["after"] = after_cursor
 
-            # Check for GraphQL errors before raising HTTP errors
-            if response.status_code == 400:
-                error_data = response.json()
-                errors = error_data.get("errors", [])
-                if errors:
-                    error_msg = "; ".join(e.get("message", str(e)) for e in errors)
-                    raise ValueError(f"Linear API error: {error_msg}")
-
-            response.raise_for_status()
-            data = response.json()
-
-            # Check for GraphQL errors in successful response
-            if "errors" in data:
-                error_msg = "; ".join(e.get("message", str(e)) for e in data["errors"])
-                raise ValueError(f"Linear GraphQL error: {error_msg}")
-
-        issues: list[LinearIssue] = []
-        for node in data.get("data", {}).get("issues", {}).get("nodes", []):
-            created_at = datetime.fromisoformat(node["createdAt"].replace("Z", "+00:00"))
-            completed_at = None
-            started_at = None
-            cycle_time_hours = None
-
-            if node.get("completedAt"):
-                completed_at = datetime.fromisoformat(node["completedAt"].replace("Z", "+00:00"))
-            if node.get("startedAt"):
-                started_at = datetime.fromisoformat(node["startedAt"].replace("Z", "+00:00"))
-
-            if started_at and completed_at:
-                cycle_time_hours = (completed_at - started_at).total_seconds() / 3600
-
-            labels = [label["name"] for label in node.get("labels", {}).get("nodes", [])]
-
-            issues.append(
-                LinearIssue(
-                    id=node["id"],
-                    identifier=node["identifier"],
-                    title=node["title"],
-                    state=node.get("state", {}).get("name", "Unknown"),
-                    created_at=created_at,
-                    completed_at=completed_at,
-                    started_at=started_at,
-                    cycle_time_hours=cycle_time_hours,
-                    labels=labels,
-                )
-            )
-
-        return issues
-
-    async def get_incident_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
-        """Get incident-related issues within the period."""
-        issues = await self.get_completed_issues(period)
-        incident_labels = {"bug", "incident", "outage", "hotfix", "p0", "sev0", "sev1"}
-
-        return [
-            issue
-            for issue in issues
-            if any(label.lower() in incident_labels for label in issue.labels)
-        ]
-
-
-class SlabClient:
-    """Client for Slab API."""
-
-    def __init__(self, api_token: str, team_id: str):
-        self.api_token = api_token
-        self.team_id = team_id
-        self.base_url = "https://api.slab.com/v1"
-        self.headers = {
-            "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/json",
-        }
-
-    async def get_postmortems(self, period: MetricsPeriod) -> list[SlabPostmortem]:
-        """Get postmortem documents within the period."""
-        postmortems: list[SlabPostmortem] = []
-
-        try:
-            async with httpx.AsyncClient() as client:
                 response = await client.get(
-                    f"{self.base_url}/teams/{self.team_id}/posts",
+                    f"{self.base_url}/incidents",
                     headers=self.headers,
+                    params=params,
                 )
+
+                if response.status_code == 400:
+                    error_data = response.json()
+                    raise ValueError(f"incident.io API error: {error_data}")
+
                 response.raise_for_status()
-                documents = response.json().get("data", [])
+                data = response.json()
 
-                for doc in documents:
-                    title = doc.get("title", "").lower()
-
-                    if "postmortem" not in title and "post-mortem" not in title:
-                        continue
-
+                for inc in data.get("incidents", []):
                     created_at = datetime.fromisoformat(
-                        doc["createdAt"].replace("Z", "+00:00")
-                    )
-                    updated_at = datetime.fromisoformat(
-                        doc["updatedAt"].replace("Z", "+00:00")
+                        inc["created_at"].replace("Z", "+00:00")
                     )
 
-                    if updated_at < period.start_date or created_at > period.end_date:
+                    # Filter by period
+                    if created_at < period.start_date or created_at > period.end_date:
                         continue
 
-                    # Extract severity from title
+                    # Parse resolved time if available
+                    resolved_at = None
+                    if inc.get("resolved_at"):
+                        resolved_at = datetime.fromisoformat(
+                            inc["resolved_at"].replace("Z", "+00:00")
+                        )
+
+                    # Calculate time to resolve
+                    time_to_resolve_hours = None
+                    if resolved_at:
+                        time_to_resolve_hours = (
+                            resolved_at - created_at
+                        ).total_seconds() / 3600
+
+                    # Get severity
                     severity = "minor"
-                    if any(s in title for s in ["sev0", "sev 0", "critical", "p0"]):
-                        severity = "critical"
-                    elif any(s in title for s in ["sev1", "sev 1", "major", "p1"]):
-                        severity = "major"
+                    severity_data = inc.get("severity", {})
+                    if severity_data:
+                        sev_name = severity_data.get("name", "").lower()
+                        if any(s in sev_name for s in ["critical", "sev0", "sev 0", "p0"]):
+                            severity = "critical"
+                        elif any(s in sev_name for s in ["major", "sev1", "sev 1", "p1"]):
+                            severity = "major"
 
-                    time_to_resolve = (updated_at - created_at).total_seconds() / 3600
+                    # Check if incident was caused by a change
+                    # incident.io may have custom fields or incident types for this
+                    # We look for common indicators:
+                    # - incident type contains "change" or "deployment"
+                    # - custom field indicates change-related
+                    # - or we assume all incidents in a deployment-heavy org are change-related
+                    is_change_related = self._is_change_related(inc)
 
-                    postmortems.append(
-                        SlabPostmortem(
-                            id=doc["id"],
-                            title=doc["title"],
-                            incident_date=created_at,
-                            resolved_at=updated_at,
+                    incidents.append(
+                        Incident(
+                            id=inc["id"],
+                            name=inc.get("name", "Unknown"),
+                            status=inc.get("status", {}).get("category", "open"),
                             severity=severity,
-                            time_to_resolve_hours=time_to_resolve,
+                            created_at=created_at,
+                            resolved_at=resolved_at,
+                            time_to_resolve_hours=time_to_resolve_hours,
+                            is_change_related=is_change_related,
                         )
                     )
 
-        except httpx.HTTPError as e:
-            print(f"Warning: Failed to fetch Slab postmortems: {e}")
+                # Handle pagination
+                pagination = data.get("pagination_meta", {})
+                after_cursor = pagination.get("after")
+                if not after_cursor:
+                    break
 
-        return postmortems
+        print(f"[incident.io] Found {len(incidents)} incidents in period")
+        return incidents
+
+    def _is_change_related(self, incident: dict) -> bool:
+        """Determine if an incident was caused by a change/deployment.
+
+        This checks various fields that might indicate a change-related incident.
+        Customize this based on how your team tags change-related incidents.
+        """
+        # Check incident type
+        inc_type = incident.get("incident_type", {})
+        if inc_type:
+            type_name = inc_type.get("name", "").lower()
+            if any(kw in type_name for kw in ["change", "deploy", "release", "rollout"]):
+                return True
+
+        # Check custom fields for change-related indicators
+        custom_fields = incident.get("custom_field_entries", [])
+        for field in custom_fields:
+            field_name = field.get("custom_field", {}).get("name", "").lower()
+            field_value = str(field.get("value", "")).lower()
+
+            # Look for fields like "cause", "root_cause", "trigger"
+            if any(kw in field_name for kw in ["cause", "trigger", "source"]):
+                if any(kw in field_value for kw in ["change", "deploy", "release", "code", "pr"]):
+                    return True
+
+        # Check if name/summary mentions deployment/change
+        name = incident.get("name", "").lower()
+        summary = incident.get("summary", "").lower()
+        change_keywords = ["deploy", "release", "rollout", "change", "update", "migration"]
+
+        if any(kw in name or kw in summary for kw in change_keywords):
+            return True
+
+        # Default: assume it's change-related for DORA purposes
+        # This is a conservative assumption - you may want to change this to False
+        # if your org has many non-change-related incidents
+        return True
+
+    async def get_change_related_incidents(self, period: MetricsPeriod) -> list[Incident]:
+        """Get only incidents that were caused by changes."""
+        all_incidents = await self.get_incidents(period)
+        return [inc for inc in all_incidents if inc.is_change_related]
 
 
 def create_github_client() -> GitHubClient:
@@ -342,23 +372,12 @@ def create_github_client() -> GitHubClient:
     return GitHubClient(token, org)
 
 
-def create_linear_client() -> LinearClient:
-    """Create Linear client from environment variables."""
-    api_key = os.environ.get("LINEAR_API_KEY")
+def create_incident_io_client() -> IncidentIOClient | None:
+    """Create incident.io client from environment variables."""
+    api_key = os.environ.get("INCIDENT_IO_API_KEY")
 
     if not api_key:
-        raise ValueError("LINEAR_API_KEY environment variable is required")
-
-    return LinearClient(api_key)
-
-
-def create_slab_client() -> SlabClient | None:
-    """Create Slab client from environment variables."""
-    api_token = os.environ.get("SLAB_API_TOKEN")
-    team_id = os.environ.get("SLAB_TEAM_ID")
-
-    if not api_token or not team_id:
-        print("Warning: SLAB_API_TOKEN and SLAB_TEAM_ID not configured, Slab disabled")
+        print("Warning: INCIDENT_IO_API_KEY not configured, incident.io disabled")
         return None
 
-    return SlabClient(api_token, team_id)
+    return IncidentIOClient(api_key)
