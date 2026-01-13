@@ -167,32 +167,34 @@ class LinearClient:
 
     async def get_completed_issues(self, period: MetricsPeriod) -> list[LinearIssue]:
         """Get issues completed within the period."""
-        query = """
-        query CompletedIssues($after: DateTime!, $before: DateTime!) {
+        # Note: Linear API uses DateTimeOrDuration type for date filters
+        # We pass the dates directly in the filter without variables
+        after_date = self._format_date(period.start_date)
+        before_date = self._format_date(period.end_date)
+
+        query = f"""
+        query CompletedIssues {{
             issues(
-                filter: {
-                    completedAt: { gte: $after, lte: $before }
-                }
+                filter: {{
+                    completedAt: {{ gte: "{after_date}", lte: "{before_date}" }}
+                }}
                 first: 100
-            ) {
-                nodes {
+            ) {{
+                nodes {{
                     id
                     identifier
                     title
                     createdAt
                     completedAt
                     startedAt
-                    state { name }
-                    labels { nodes { name } }
-                }
-            }
-        }
+                    state {{ name }}
+                    labels {{ nodes {{ name }} }}
+                }}
+            }}
+        }}
         """
 
-        variables = {
-            "after": self._format_date(period.start_date),
-            "before": self._format_date(period.end_date),
-        }
+        variables = {}
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
