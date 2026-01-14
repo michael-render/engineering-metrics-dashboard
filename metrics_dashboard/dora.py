@@ -19,15 +19,25 @@ from metrics_dashboard.models import (
 
 
 def calculate_dora_metrics(data: DataFetchResult, period: MetricsPeriod) -> DoraMetrics:
-    """Calculate all DORA metrics from fetched data."""
-    # Filter to only change-related incidents for DORA metrics
-    change_incidents = [inc for inc in data.incidents if inc.is_change_related]
+    """Calculate all DORA metrics from fetched data.
+
+    For DORA metrics, we filter incidents to those that are:
+    - Change-related (caused by a deployment)
+    - User-impacting (critical/major severity per DORA definition)
+    """
+    # Filter to only DORA-relevant incidents:
+    # - Change-related (caused by deployments)
+    # - User-impacting (critical/major severity)
+    dora_incidents = [
+        inc for inc in data.incidents
+        if inc.is_change_related and inc.is_user_impacting
+    ]
 
     return DoraMetrics(
         deployment_frequency=calculate_deployment_frequency(data.deployments, period),
         lead_time=calculate_lead_time(data.pull_requests),
-        change_failure_rate=calculate_change_failure_rate(data.deployments, change_incidents),
-        mttr=calculate_mttr(change_incidents),
+        change_failure_rate=calculate_change_failure_rate(data.deployments, dora_incidents),
+        mttr=calculate_mttr(dora_incidents),
         period=period,
         generated_at=datetime.now(),
     )
@@ -170,12 +180,21 @@ def calculate_mttr(incidents: list[Incident]) -> MTTR:
 
     Per DORA definition: How long it takes to restore service when a
     service incident or defect that impacts users occurs.
+
+    Incidents should be pre-filtered to only include:
+    - Change-related incidents (caused by deployments)
+    - User-impacting incidents (critical/major severity)
+
+    time_to_resolve_hours is calculated by IncidentIOClient using (in priority):
+    1. duration_metrics from incident.io (pre-calculated, most accurate)
+    2. resolved_at - impact_started_at (custom timestamps)
+    3. resolved_at - created_at (fallback)
     """
     total_incidents = len(incidents)
     resolution_times: list[float] = []
 
     for incident in incidents:
-        if incident.time_to_resolve_hours is not None:
+        if incident.time_to_resolve_hours is not None and incident.time_to_resolve_hours > 0:
             resolution_times.append(incident.time_to_resolve_hours)
 
     # No incidents at all - truly elite

@@ -121,7 +121,10 @@ async def fetch_incidents(period_dict: dict) -> list[dict]:
     """Fetch incidents from incident.io.
 
     Runs in its own compute instance. Called as a subtask from the orchestrator.
-    Only fetches change-related incidents for DORA metrics.
+    Fetches DORA-relevant incidents (change-related AND user-impacting).
+
+    Per DORA definition, MTTR measures "time to restore service when a
+    service incident or defect that impacts users occurs."
     """
     period = MetricsPeriod(**period_dict)
     client = create_incident_io_client()
@@ -132,9 +135,9 @@ async def fetch_incidents(period_dict: dict) -> list[dict]:
 
     print(f"[incident.io] Fetching incidents for {period.start_date.date()} to {period.end_date.date()}")
 
-    incidents = await client.get_change_related_incidents(period)
+    incidents = await client.get_dora_incidents(period)
 
-    print(f"[incident.io] Found {len(incidents)} change-related incidents")
+    print(f"[incident.io] Found {len(incidents)} DORA-relevant incidents (change-related + user-impacting)")
     return [inc.model_dump(mode="json") for inc in incidents]
 
 
