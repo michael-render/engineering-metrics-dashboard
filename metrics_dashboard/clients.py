@@ -288,13 +288,8 @@ class IncidentIOClient:
                         elif any(s in sev_name for s in ["major", "sev1", "sev 1", "p1"]):
                             severity = "major"
 
-                    # Check if incident was caused by a change
-                    # incident.io may have custom fields or incident types for this
-                    # We look for common indicators:
-                    # - incident type contains "change" or "deployment"
-                    # - custom field indicates change-related
-                    # - or we assume all incidents in a deployment-heavy org are change-related
-                    is_change_related = self._is_change_related(inc)
+                    # Use incident.io's is_change_related field directly
+                    is_change_related = inc.get("is_change_related", False)
 
                     incidents.append(
                         Incident(
@@ -317,43 +312,6 @@ class IncidentIOClient:
 
         print(f"[incident.io] Found {len(incidents)} incidents in period")
         return incidents
-
-    def _is_change_related(self, incident: dict) -> bool:
-        """Determine if an incident was caused by a change/deployment.
-
-        This checks various fields that might indicate a change-related incident.
-        Customize this based on how your team tags change-related incidents.
-        """
-        # Check incident type
-        inc_type = incident.get("incident_type", {})
-        if inc_type:
-            type_name = inc_type.get("name", "").lower()
-            if any(kw in type_name for kw in ["change", "deploy", "release", "rollout"]):
-                return True
-
-        # Check custom fields for change-related indicators
-        custom_fields = incident.get("custom_field_entries", [])
-        for field in custom_fields:
-            field_name = field.get("custom_field", {}).get("name", "").lower()
-            field_value = str(field.get("value", "")).lower()
-
-            # Look for fields like "cause", "root_cause", "trigger"
-            if any(kw in field_name for kw in ["cause", "trigger", "source"]):
-                if any(kw in field_value for kw in ["change", "deploy", "release", "code", "pr"]):
-                    return True
-
-        # Check if name/summary mentions deployment/change
-        name = incident.get("name", "").lower()
-        summary = incident.get("summary", "").lower()
-        change_keywords = ["deploy", "release", "rollout", "change", "update", "migration"]
-
-        if any(kw in name or kw in summary for kw in change_keywords):
-            return True
-
-        # Default: assume it's change-related for DORA purposes
-        # This is a conservative assumption - you may want to change this to False
-        # if your org has many non-change-related incidents
-        return True
 
     async def get_change_related_incidents(self, period: MetricsPeriod) -> list[Incident]:
         """Get only incidents that were caused by changes."""
