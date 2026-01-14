@@ -121,6 +121,9 @@ def calculate_change_failure_rate(
     in production that requires remediation (rollback, hotfix, patch).
 
     We count incidents from incident.io that are marked as change-related.
+
+    Note: An incident may be caused by a deployment from a previous period,
+    so we cap the percentage at 100% for meaningful reporting.
     """
     successful_deployments = len([d for d in deployments if d.status == "success"])
     total_deployments = successful_deployments
@@ -136,7 +139,10 @@ def calculate_change_failure_rate(
     # Count change-related incidents as failed changes
     failed_changes = len(incidents)
 
-    percentage = (failed_changes / total_deployments * 100) if total_deployments > 0 else 0
+    # Calculate percentage - cap at 100% since >100% is not meaningful
+    # (can happen if incidents were caused by deployments from previous periods)
+    raw_percentage = (failed_changes / total_deployments * 100)
+    percentage = min(raw_percentage, 100.0)
 
     rating = _get_change_failure_rate_rating(percentage)
 
@@ -165,18 +171,29 @@ def calculate_mttr(incidents: list[Incident]) -> MTTR:
     Per DORA definition: How long it takes to restore service when a
     service incident or defect that impacts users occurs.
     """
+    total_incidents = len(incidents)
     resolution_times: list[float] = []
 
     for incident in incidents:
         if incident.time_to_resolve_hours is not None:
             resolution_times.append(incident.time_to_resolve_hours)
 
-    if not resolution_times:
+    # No incidents at all - truly elite
+    if total_incidents == 0:
         return MTTR(
             average_hours=0,
             median_hours=0,
             incidents=0,
-            rating=DoraRating.ELITE,  # No incidents is elite
+            rating=DoraRating.ELITE,
+        )
+
+    # Have incidents but none resolved yet - can't calculate MTTR
+    if not resolution_times:
+        return MTTR(
+            average_hours=0,
+            median_hours=0,
+            incidents=total_incidents,  # Report actual incident count
+            rating=DoraRating.LOW,  # Can't rate without resolution data
         )
 
     avg = sum(resolution_times) / len(resolution_times)
@@ -186,7 +203,7 @@ def calculate_mttr(incidents: list[Incident]) -> MTTR:
     return MTTR(
         average_hours=avg,
         median_hours=med,
-        incidents=len(incidents),
+        incidents=total_incidents,
         rating=rating,
     )
 

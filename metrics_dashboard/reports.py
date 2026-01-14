@@ -54,9 +54,17 @@ def _generate_highlights(
         highlights.append(
             f"Change failure rate of {metrics.change_failure_rate.percentage:.1f}% is excellent"
         )
+    elif metrics.change_failure_rate.failed_changes > 0:
+        highlights.append(
+            f"{metrics.change_failure_rate.failed_changes} incidents from {metrics.change_failure_rate.total_deployments} deployments"
+        )
 
     if metrics.mttr.incidents == 0:
         highlights.append("Zero incidents this period!")
+    elif metrics.mttr.median_hours == 0 and metrics.mttr.incidents > 0:
+        highlights.append(
+            f"{metrics.mttr.incidents} incidents (MTTR pending resolution data)"
+        )
     elif metrics.mttr.rating.value in ("elite", "high"):
         highlights.append(
             f"MTTR of {metrics.mttr.median_hours:.1f} hours shows strong incident response"
