@@ -105,6 +105,12 @@ class Incident(BaseModel):
 
     Used for Change Failure Rate and MTTR calculations.
     Only change-related incidents count toward DORA metrics.
+
+    For MTTR calculation per DORA definition ("time to restore service when
+    an incident impacts users"), we prioritize:
+    1. duration_seconds from incident.io's duration_metrics (most accurate)
+    2. resolved_at - impact_started_at (if custom timestamp exists)
+    3. resolved_at - created_at (fallback)
     """
 
     id: str
@@ -113,8 +119,11 @@ class Incident(BaseModel):
     severity: Literal["critical", "major", "minor"]
     created_at: datetime
     resolved_at: datetime | None = None
-    time_to_resolve_hours: float | None = None
+    impact_started_at: datetime | None = None  # From incident_timestamp_values
+    duration_seconds: float | None = None  # From duration_metrics (pre-calculated MTTR)
+    time_to_resolve_hours: float | None = None  # Calculated recovery time
     is_change_related: bool = True  # True if caused by a deployment/change
+    is_user_impacting: bool = True  # True if incident impacted users
 
 
 class MetricsReport(BaseModel):

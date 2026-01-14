@@ -229,7 +229,13 @@ class IncidentIOClient:
 
         For DORA metrics, we're interested in incidents that:
         - Were caused by a change (deployment)
+        - Impact users (critical/major severity)
         - Have been resolved (so we can calculate MTTR)
+
+        MTTR is calculated using (in priority order):
+        1. duration_metrics from incident.io (pre-calculated, most accurate)
+        2. impact_started_at to resolved_at (custom timestamps)
+        3. created_at to resolved_at (fallback)
         """
         incidents: list[Incident] = []
 
@@ -271,12 +277,41 @@ class IncidentIOClient:
                             inc["resolved_at"].replace("Z", "+00:00")
                         )
 
-                    # Calculate time to resolve
+                    # Extract impact_started_at from incident_timestamp_values
+                    # Look for common names: "Impact started", "Started", "Detected"
+                    impact_started_at = None
+                    timestamp_values = inc.get("incident_timestamp_values", [])
+                    for ts in timestamp_values:
+                        ts_name = ts.get("incident_timestamp", {}).get("name", "").lower()
+                        if any(name in ts_name for name in ["impact start", "started", "detected", "began"]):
+                            ts_value = ts.get("value", {}).get("value")
+                            if ts_value:
+                                impact_started_at = datetime.fromisoformat(
+                                    ts_value.replace("Z", "+00:00")
+                                )
+                                break
+
+                    # Extract duration from duration_metrics
+                    # Look for time-to-recovery related metrics
+                    duration_seconds = None
+                    duration_metrics = inc.get("duration_metrics", [])
+                    for dm in duration_metrics:
+                        metric_name = dm.get("duration_metric", {}).get("name", "").lower()
+                        # Look for MTTR-related metric names
+                        if any(name in metric_name for name in ["time to recov", "time to resol", "mttr", "lasted", "duration"]):
+                            duration_seconds = dm.get("value_seconds")
+                            if duration_seconds is not None:
+                                break
+
+                    # Calculate time_to_resolve_hours using best available data
                     time_to_resolve_hours = None
-                    if resolved_at:
-                        time_to_resolve_hours = (
-                            resolved_at - created_at
-                        ).total_seconds() / 3600
+                    if duration_seconds is not None:
+                        # Best: use pre-calculated duration from incident.io
+                        time_to_resolve_hours = duration_seconds / 3600
+                    elif resolved_at:
+                        # Use impact_started_at if available, otherwise created_at
+                        start_time = impact_started_at or created_at
+                        time_to_resolve_hours = (resolved_at - start_time).total_seconds() / 3600
 
                     # Get severity
                     severity = "minor"
@@ -291,6 +326,9 @@ class IncidentIOClient:
                     # Use incident.io's is_change_related field directly
                     is_change_related = inc.get("is_change_related", False)
 
+                    # Determine if incident impacts users (critical/major = user-impacting)
+                    is_user_impacting = severity in ("critical", "major")
+
                     incidents.append(
                         Incident(
                             id=inc["id"],
@@ -299,8 +337,11 @@ class IncidentIOClient:
                             severity=severity,
                             created_at=created_at,
                             resolved_at=resolved_at,
+                            impact_started_at=impact_started_at,
+                            duration_seconds=duration_seconds,
                             time_to_resolve_hours=time_to_resolve_hours,
                             is_change_related=is_change_related,
+                            is_user_impacting=is_user_impacting,
                         )
                     )
 
@@ -317,6 +358,24 @@ class IncidentIOClient:
         """Get only incidents that were caused by changes."""
         all_incidents = await self.get_incidents(period)
         return [inc for inc in all_incidents if inc.is_change_related]
+
+    async def get_dora_incidents(self, period: MetricsPeriod) -> list[Incident]:
+        """Get incidents relevant for DORA metrics.
+
+        Per DORA definition, MTTR measures "time to restore service when a
+        service incident or defect that impacts users occurs."
+
+        This returns incidents that are:
+        - Change-related (caused by a deployment)
+        - User-impacting (critical or major severity)
+        """
+        all_incidents = await self.get_incidents(period)
+        dora_incidents = [
+            inc for inc in all_incidents
+            if inc.is_change_related and inc.is_user_impacting
+        ]
+        print(f"[incident.io] {len(dora_incidents)} are change-related AND user-impacting (for DORA)")
+        return dora_incidents
 
 
 def create_github_client() -> GitHubClient:
