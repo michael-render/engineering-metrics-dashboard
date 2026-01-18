@@ -33,12 +33,6 @@ services:
         fromDatabase:
           name: metrics-db
           property: connectionString
-      - key: GITHUB_TOKEN
-        sync: false
-      - key: GITHUB_ORG
-        sync: false
-      - key: INCIDENT_IO_API_KEY
-        sync: false
 
   # Cron job to trigger weekly metrics workflow
   - type: cron
