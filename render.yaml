@@ -15,7 +15,7 @@
 databases:
   # PostgreSQL database for storing metrics data
   - name: metrics-db
-    plan: starter
+    plan: basic-256mb
     databaseName: engineering_metrics
     user: metrics_user
 
