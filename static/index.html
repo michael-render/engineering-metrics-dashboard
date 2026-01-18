@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Engineering Metrics Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Engineering Metrics Dashboard</h1>
+            <div class="controls">
+                <select id="periodType">
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                </select>
+                <select id="periods">
+                    <option value="4">Last 4 periods</option>
+                    <option value="8">Last 8 periods</option>
+                    <option value="12" selected>Last 12 periods</option>
+                    <option value="26">Last 26 periods</option>
+                </select>
+                <button id="refreshBtn" onclick="refreshData()">Refresh</button>
+            </div>
+        </header>
+
+        <section class="metrics-cards">
+            <div class="metric-card" id="df-card">
+                <div class="metric-header">
+                    <h3>Deployment Frequency</h3>
+                    <span class="rating-badge" id="df-rating">-</span>
+                </div>
+                <div class="metric-value" id="df-value">-</div>
+                <div class="metric-label">deployments per day</div>
+            </div>
+
+            <div class="metric-card" id="lt-card">
+                <div class="metric-header">
+                    <h3>Lead Time</h3>
+                    <span class="rating-badge" id="lt-rating">-</span>
+                </div>
+                <div class="metric-value" id="lt-value">-</div>
+                <div class="metric-label">hours (median)</div>
+            </div>
+
+            <div class="metric-card" id="cfr-card">
+                <div class="metric-header">
+                    <h3>Change Failure Rate</h3>
+                    <span class="rating-badge" id="cfr-rating">-</span>
+                </div>
+                <div class="metric-value" id="cfr-value">-</div>
+                <div class="metric-label">percent</div>
+            </div>
+
+            <div class="metric-card" id="mttr-card">
+                <div class="metric-header">
+                    <h3>MTTR</h3>
+                    <span class="rating-badge" id="mttr-rating">-</span>
+                </div>
+                <div class="metric-value" id="mttr-value">-</div>
+                <div class="metric-label">hours (median)</div>
+            </div>
+        </section>
+
+        <section class="overall-rating">
+            <h2>Overall DORA Rating: <span id="overall-rating">-</span></h2>
+            <p id="period-info">Loading...</p>
+        </section>
+
+        <section class="charts">
+            <div class="chart-container">
+                <h3>DORA Metrics Trends</h3>
+                <canvas id="trendsChart"></canvas>
+            </div>
+        </section>
+
+        <section class="summary" id="summary-section" style="display: none;">
+            <h3>Trend Summary</h3>
+            <div class="summary-content">
+                <p><strong>Trend Direction:</strong> <span id="trend-direction">-</span></p>
+                <p><strong>Avg Deployment Frequency:</strong> <span id="avg-df">-</span>/day</p>
+                <p><strong>Avg Lead Time:</strong> <span id="avg-lt">-</span> hours</p>
+                <p><strong>Avg Change Failure Rate:</strong> <span id="avg-cfr">-</span>%</p>
+                <p><strong>Avg MTTR:</strong> <span id="avg-mttr">-</span> hours</p>
+            </div>
+        </section>
+
+        <footer>
+            <p>Data powered by GitHub and incident.io | Built with Render Workflows</p>
+        </footer>
+    </div>
+
+    <script src="/js/api.js"></script>
+    <script src="/js/charts.js"></script>
+    <script src="/js/dashboard.js"></script>
+</body>
+</html>

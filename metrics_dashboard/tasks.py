@@ -177,6 +177,70 @@ async def calculate_metrics(
     return metrics.model_dump(mode="json")
 
 
+# =============================================================================
+# Storage Tasks - Store data in PostgreSQL
+# =============================================================================
+
+
+@task
+async def store_raw_data(
+    deployments_json: list[dict],
+    prs_json: list[dict],
+    incidents_json: list[dict],
+) -> dict:
+    """Store fetched data in PostgreSQL.
+
+    Uses upsert (INSERT ... ON CONFLICT UPDATE) to handle re-runs gracefully.
+    Returns counts of inserted/updated records.
+    """
+    from metrics_dashboard.database.repository import DataRepository
+    from metrics_dashboard.database.session import get_async_session
+
+    print("[Storage] Storing raw data in database...")
+
+    async with get_async_session() as session:
+        repo = DataRepository(session)
+
+        dep_count = await repo.upsert_deployments(deployments_json)
+        pr_count = await repo.upsert_pull_requests(prs_json)
+        inc_count = await repo.upsert_incidents(incidents_json)
+
+        await session.commit()
+
+    result = {
+        "deployments_stored": dep_count,
+        "pull_requests_stored": pr_count,
+        "incidents_stored": inc_count,
+    }
+
+    print(f"[Storage] Stored: {dep_count} deployments, {pr_count} PRs, {inc_count} incidents")
+    return result
+
+
+@task
+async def store_metrics_snapshot(metrics_json: dict, period_dict: dict) -> int:
+    """Store calculated DORA metrics as a historical snapshot.
+
+    Returns the snapshot ID.
+    """
+    from metrics_dashboard.database.repository import MetricsRepository
+    from metrics_dashboard.database.session import get_async_session
+    from metrics_dashboard.models import DoraMetrics
+
+    print("[Storage] Storing metrics snapshot...")
+
+    metrics = DoraMetrics(**metrics_json)
+    period = MetricsPeriod(**period_dict)
+
+    async with get_async_session() as session:
+        repo = MetricsRepository(session)
+        snapshot_id = await repo.create_snapshot(metrics, period)
+        await session.commit()
+
+    print(f"[Storage] Created metrics snapshot with ID: {snapshot_id}")
+    return snapshot_id
+
+
 @task
 async def generate_and_notify(metrics_json: dict) -> str:
     """Generate report and send notifications.
@@ -215,8 +279,10 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
 
     This task coordinates all other tasks:
     1. Fetches data from all sources IN PARALLEL using asyncio.gather()
-    2. Calculates DORA metrics
-    3. Generates and sends the report
+    2. Stores raw data in PostgreSQL
+    3. Calculates DORA metrics
+    4. Stores metrics snapshot in PostgreSQL
+    5. Generates and sends the report
 
     Args:
         period_type: Either "weekly" or "monthly"
@@ -253,9 +319,22 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
     print()
 
     # -------------------------------------------------------------------------
-    # Stage 2: TRANSFORM - Calculate DORA metrics
+    # Stage 2: STORE RAW DATA - Persist to PostgreSQL
     # -------------------------------------------------------------------------
-    print("--- Stage 2: Calculating DORA metrics ---")
+    print("--- Stage 2: Storing raw data in database ---")
+
+    storage_result = await store_raw_data(
+        deployments_json,
+        prs_json,
+        incidents_json,
+    )
+
+    print()
+
+    # -------------------------------------------------------------------------
+    # Stage 3: TRANSFORM - Calculate DORA metrics
+    # -------------------------------------------------------------------------
+    print("--- Stage 3: Calculating DORA metrics ---")
 
     metrics_json = await calculate_metrics(
         deployments_json,
@@ -267,9 +346,18 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
     print()
 
     # -------------------------------------------------------------------------
-    # Stage 3: LOAD - Generate report and notify
+    # Stage 4: STORE SNAPSHOT - Save metrics to PostgreSQL for historical tracking
     # -------------------------------------------------------------------------
-    print("--- Stage 3: Generating report and sending notifications ---")
+    print("--- Stage 4: Storing metrics snapshot ---")
+
+    snapshot_id = await store_metrics_snapshot(metrics_json, period_dict)
+
+    print()
+
+    # -------------------------------------------------------------------------
+    # Stage 5: LOAD - Generate report and notify
+    # -------------------------------------------------------------------------
+    print("--- Stage 5: Generating report and sending notifications ---")
 
     report_markdown = await generate_and_notify(metrics_json)
 
