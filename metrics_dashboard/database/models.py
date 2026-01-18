@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -18,7 +18,7 @@ class DeploymentRecord(Base):
     __tablename__ = "deployments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    github_deployment_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    github_deployment_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     sha: Mapped[str] = mapped_column(String(40))
     ref: Mapped[str] = mapped_column(String(255))
     environment: Mapped[str] = mapped_column(String(100), index=True)
