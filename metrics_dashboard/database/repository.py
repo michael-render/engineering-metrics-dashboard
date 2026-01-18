@@ -16,6 +16,16 @@ from metrics_dashboard.dora import get_overall_rating
 from metrics_dashboard.models import DoraMetrics, MetricsPeriod
 
 
+def _parse_datetime(value: str | datetime | None) -> datetime | None:
+    """Parse datetime from string or return as-is if already datetime."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    # Handle ISO format strings (e.g., '2026-01-08T19:08:28Z')
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
 class DataRepository:
     """Repository for raw data operations (deployments, PRs, incidents)."""
 
@@ -37,7 +47,7 @@ class DataRepository:
                 ref=dep["ref"],
                 environment=dep["environment"],
                 status=dep["status"],
-                created_at=dep["created_at"],
+                created_at=_parse_datetime(dep["created_at"]),
                 fetched_at=datetime.utcnow(),
             )
             stmt = stmt.on_conflict_do_update(
@@ -63,9 +73,9 @@ class DataRepository:
             stmt = insert(PullRequestRecord).values(
                 github_pr_number=pr["number"],
                 title=pr["title"],
-                created_at=pr["created_at"],
-                merged_at=pr.get("merged_at"),
-                first_commit_at=pr.get("first_commit_at"),
+                created_at=_parse_datetime(pr["created_at"]),
+                merged_at=_parse_datetime(pr.get("merged_at")),
+                first_commit_at=_parse_datetime(pr.get("first_commit_at")),
                 fetched_at=datetime.utcnow(),
             )
             stmt = stmt.on_conflict_do_update(
@@ -95,9 +105,9 @@ class DataRepository:
                 name=inc["name"],
                 status=inc["status"],
                 severity=inc["severity"],
-                created_at=inc["created_at"],
-                resolved_at=inc.get("resolved_at"),
-                impact_started_at=inc.get("impact_started_at"),
+                created_at=_parse_datetime(inc["created_at"]),
+                resolved_at=_parse_datetime(inc.get("resolved_at")),
+                impact_started_at=_parse_datetime(inc.get("impact_started_at")),
                 duration_seconds=inc.get("duration_seconds"),
                 time_to_resolve_hours=inc.get("time_to_resolve_hours"),
                 is_change_related=inc.get("is_change_related", True),
