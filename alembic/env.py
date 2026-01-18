@@ -31,13 +31,15 @@ def get_url() -> str:
     url = os.environ.get("DATABASE_URL", "")
 
     if url:
-        # Convert Render's postgres:// to postgresql:// for SQLAlchemy
+        # Convert Render's postgres:// to postgresql+asyncpg:// for async SQLAlchemy
         if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql://", 1)
+            url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
         return url
 
     # Fallback for local development
-    return "postgresql://postgres:postgres@localhost:5432/engineering_metrics"
+    return "postgresql+asyncpg://postgres:postgres@localhost:5432/engineering_metrics"
 
 
 def run_migrations_offline() -> None:
