@@ -87,3 +87,82 @@ async function fetchIncidents(startDate, endDate, severity = null, limit = 100) 
 
     return response.json();
 }
+
+/**
+ * Preview backfill periods without starting
+ * @param {string} startDate - ISO date string
+ * @param {string} endDate - ISO date string
+ * @param {string} periodType - 'weekly' or 'monthly'
+ * @param {number} delaySeconds - Delay between API calls
+ * @returns {Promise<Object>} Preview data
+ */
+async function previewBackfill(startDate, endDate, periodType = 'weekly', delaySeconds = 2.0) {
+    const params = new URLSearchParams({
+        start_date: startDate,
+        end_date: endDate,
+        period_type: periodType,
+        delay_seconds: delaySeconds.toString(),
+    });
+
+    const response = await fetch(`${API_BASE}/backfill/preview?${params}`);
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || `API error: ${response.status}`);
+    }
+    return response.json();
+}
+
+/**
+ * Start a backfill job
+ * @param {string} startDate - ISO date string
+ * @param {string} endDate - ISO date string
+ * @param {string} periodType - 'weekly' or 'monthly'
+ * @param {number} delaySeconds - Delay between API calls
+ * @returns {Promise<Object>} Start response
+ */
+async function startBackfill(startDate, endDate, periodType = 'weekly', delaySeconds = 2.0) {
+    const response = await fetch(`${API_BASE}/backfill/start`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            start_date: startDate,
+            end_date: endDate,
+            period_type: periodType,
+            delay_seconds: delaySeconds,
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || `API error: ${response.status}`);
+    }
+    return response.json();
+}
+
+/**
+ * Get current backfill job status
+ * @returns {Promise<Object>} Status data
+ */
+async function getBackfillStatus() {
+    const response = await fetch(`${API_BASE}/backfill/status`);
+    if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+    }
+    return response.json();
+}
+
+/**
+ * Request to stop current backfill job
+ * @returns {Promise<Object>} Stop response
+ */
+async function stopBackfill() {
+    const response = await fetch(`${API_BASE}/backfill/stop`, {
+        method: 'POST',
+    });
+    if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+    }
+    return response.json();
+}
