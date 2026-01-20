@@ -177,5 +177,244 @@ function showError(message) {
     document.getElementById('period-info').textContent = `Error: ${message}`;
 }
 
+// Backfill state
+let backfillStatusInterval = null;
+let currentPreview = null;
+
+/**
+ * Initialize backfill form with default dates
+ */
+function initBackfillForm() {
+    const today = new Date();
+    const twoYearsAgo = new Date(today);
+    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+
+    document.getElementById('backfillStartDate').value = twoYearsAgo.toISOString().split('T')[0];
+    document.getElementById('backfillEndDate').value = today.toISOString().split('T')[0];
+
+    // Check if there's a running backfill on page load
+    checkBackfillStatus();
+}
+
+/**
+ * Handle preview backfill button click
+ */
+async function handlePreviewBackfill() {
+    const startDate = document.getElementById('backfillStartDate').value;
+    const endDate = document.getElementById('backfillEndDate').value;
+    const periodType = document.getElementById('backfillPeriodType').value;
+    const delay = parseFloat(document.getElementById('backfillDelay').value);
+
+    if (!startDate || !endDate) {
+        alert('Please select start and end dates');
+        return;
+    }
+
+    const previewBtn = document.getElementById('previewBackfillBtn');
+    previewBtn.disabled = true;
+    previewBtn.textContent = 'Loading...';
+
+    try {
+        const preview = await previewBackfill(
+            `${startDate}T00:00:00Z`,
+            `${endDate}T23:59:59Z`,
+            periodType,
+            delay
+        );
+
+        currentPreview = preview;
+        showBackfillPreview(preview);
+        document.getElementById('startBackfillBtn').disabled = false;
+    } catch (error) {
+        alert(`Preview failed: ${error.message}`);
+    } finally {
+        previewBtn.disabled = false;
+        previewBtn.textContent = 'Preview';
+    }
+}
+
+/**
+ * Show backfill preview
+ * @param {Object} preview - Preview data from API
+ */
+function showBackfillPreview(preview) {
+    document.getElementById('previewPeriods').textContent =
+        `${preview.total_periods} ${preview.period_type} periods`;
+    document.getElementById('previewTime').textContent =
+        `~${preview.estimated_minutes} minutes`;
+
+    const periodsList = document.getElementById('previewPeriodsList');
+    periodsList.innerHTML = '';
+
+    preview.periods.forEach((p, i) => {
+        const start = new Date(p.start_date).toLocaleDateString();
+        const end = new Date(p.end_date).toLocaleDateString();
+        periodsList.innerHTML += `<span class="period-chip">${start} - ${end}</span>`;
+    });
+
+    if (preview.total_periods > preview.periods.length) {
+        periodsList.innerHTML += `<span class="period-chip more">+${preview.total_periods - preview.periods.length} more</span>`;
+    }
+
+    document.getElementById('backfillPreview').style.display = 'block';
+}
+
+/**
+ * Handle start backfill button click
+ */
+async function handleStartBackfill() {
+    if (!currentPreview) {
+        alert('Please preview first');
+        return;
+    }
+
+    const confirmed = confirm(
+        `This will backfill ${currentPreview.total_periods} periods.\n` +
+        `Estimated time: ~${currentPreview.estimated_minutes} minutes.\n\n` +
+        `Continue?`
+    );
+
+    if (!confirmed) return;
+
+    const startDate = document.getElementById('backfillStartDate').value;
+    const endDate = document.getElementById('backfillEndDate').value;
+    const periodType = document.getElementById('backfillPeriodType').value;
+    const delay = parseFloat(document.getElementById('backfillDelay').value);
+
+    try {
+        await startBackfill(
+            `${startDate}T00:00:00Z`,
+            `${endDate}T23:59:59Z`,
+            periodType,
+            delay
+        );
+
+        showBackfillRunning();
+        startStatusPolling();
+    } catch (error) {
+        alert(`Failed to start backfill: ${error.message}`);
+    }
+}
+
+/**
+ * Handle stop backfill button click
+ */
+async function handleStopBackfill() {
+    try {
+        await stopBackfill();
+        alert('Stop requested. Current period will complete.');
+    } catch (error) {
+        alert(`Failed to stop: ${error.message}`);
+    }
+}
+
+/**
+ * Show backfill running state
+ */
+function showBackfillRunning() {
+    document.getElementById('previewBackfillBtn').disabled = true;
+    document.getElementById('startBackfillBtn').style.display = 'none';
+    document.getElementById('stopBackfillBtn').style.display = 'inline-block';
+    document.getElementById('backfillStatus').style.display = 'block';
+}
+
+/**
+ * Show backfill idle state
+ */
+function showBackfillIdle() {
+    document.getElementById('previewBackfillBtn').disabled = false;
+    document.getElementById('startBackfillBtn').style.display = 'inline-block';
+    document.getElementById('startBackfillBtn').disabled = true;
+    document.getElementById('stopBackfillBtn').style.display = 'none';
+    currentPreview = null;
+}
+
+/**
+ * Start polling for backfill status
+ */
+function startStatusPolling() {
+    if (backfillStatusInterval) {
+        clearInterval(backfillStatusInterval);
+    }
+
+    backfillStatusInterval = setInterval(async () => {
+        await checkBackfillStatus();
+    }, 3000);
+}
+
+/**
+ * Check current backfill status
+ */
+async function checkBackfillStatus() {
+    try {
+        const status = await getBackfillStatus();
+
+        if (status.running) {
+            showBackfillRunning();
+            updateBackfillProgress(status);
+        } else {
+            if (backfillStatusInterval) {
+                clearInterval(backfillStatusInterval);
+                backfillStatusInterval = null;
+            }
+
+            if (status.error) {
+                alert(`Backfill error: ${status.error}`);
+            } else if (status.results && status.results.length > 0) {
+                // Just completed
+                showBackfillComplete(status);
+                refreshData(); // Refresh dashboard with new data
+            }
+
+            showBackfillIdle();
+        }
+    } catch (error) {
+        console.error('Failed to check backfill status:', error);
+    }
+}
+
+/**
+ * Update backfill progress display
+ * @param {Object} status - Status from API
+ */
+function updateBackfillProgress(status) {
+    document.getElementById('backfillProgress').textContent = status.progress || '0/?';
+
+    // Parse progress for progress bar
+    const progressMatch = (status.progress || '0/1').match(/(\d+)\/(\d+)/);
+    if (progressMatch) {
+        const current = parseInt(progressMatch[1]);
+        const total = parseInt(progressMatch[2]);
+        const percent = total > 0 ? (current / total) * 100 : 0;
+        document.getElementById('progressFill').style.width = `${percent}%`;
+    }
+
+    // Show recent results
+    const resultsEl = document.getElementById('backfillResults');
+    if (status.results && status.results.length > 0) {
+        const recent = status.results.slice(-3).reverse();
+        resultsEl.innerHTML = recent.map(r =>
+            `<div class="result-item">
+                <span>${new Date(r.period_start).toLocaleDateString()} - ${new Date(r.period_end).toLocaleDateString()}</span>
+                <span>${r.deployments} deploys, ${r.pull_requests} PRs, ${r.incidents} incidents</span>
+            </div>`
+        ).join('');
+    }
+}
+
+/**
+ * Show backfill complete message
+ * @param {Object} status - Final status
+ */
+function showBackfillComplete(status) {
+    const resultsEl = document.getElementById('backfillResults');
+    resultsEl.innerHTML = `<div class="result-complete">Backfill complete! Processed ${status.results.length} periods.</div>`;
+    document.getElementById('backfillProgress').textContent = 'Complete';
+    document.getElementById('progressFill').style.width = '100%';
+}
+
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', initDashboard);
+document.addEventListener('DOMContentLoaded', () => {
+    initDashboard();
+    initBackfillForm();
+});

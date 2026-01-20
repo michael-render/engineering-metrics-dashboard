@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from metrics_dashboard.api.routers import metrics, raw_data
+from metrics_dashboard.api.routers import backfill, metrics, raw_data
 
 
 def create_app() -> FastAPI:
@@ -23,13 +23,14 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=["*"],  # Configure for production
         allow_credentials=True,
-        allow_methods=["GET"],
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
     # Include routers
     app.include_router(metrics.router, prefix="/api/v1/metrics", tags=["metrics"])
     app.include_router(raw_data.router, prefix="/api/v1/raw", tags=["raw-data"])
+    app.include_router(backfill.router, prefix="/api/v1/backfill", tags=["backfill"])
 
     # Health check endpoint
     @app.get("/health", tags=["health"])
