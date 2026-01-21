@@ -37,7 +37,7 @@ services:
       # Required for backfill feature to trigger workflows
       - key: RENDER_API_KEY
         sync: false
-      - key: RENDER_WORKFLOW_ID
+      - key: RENDER_WORKFLOW_SLUG
         sync: false
 
   # Cron job to trigger weekly metrics workflow
