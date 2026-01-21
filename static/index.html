@@ -22,7 +22,8 @@
                     <option value="12" selected>Last 12 periods</option>
                     <option value="26">Last 26 periods</option>
                 </select>
-                <button id="refreshBtn" onclick="refreshData()">Refresh</button>
+                <button id="refreshBtn">Refresh</button>
+                <button id="backfillBtn" class="btn-secondary">Backfill Data</button>
             </div>
         </header>
 
@@ -87,12 +88,25 @@
             </div>
         </section>
 
-        <section class="backfill-section" id="backfill-section">
-            <h3>Backfill Historical Data</h3>
-            <p class="backfill-description">Fill in historical metrics data from GitHub and incident.io APIs.</p>
+        <footer>
+            <p>Data powered by GitHub and incident.io | Built with Render Workflows</p>
+        </footer>
+    </div>
 
-            <div class="backfill-form">
-                <div class="form-row">
+    <!-- Backfill Modal -->
+    <div class="modal-overlay" id="backfillModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Backfill Historical Data</h2>
+                <button class="modal-close" id="closeBackfillModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">
+                    Fetch historical metrics data from GitHub and incident.io APIs.
+                    This process runs in the background with rate limiting to avoid API limits.
+                </p>
+
+                <div class="form-grid">
                     <div class="form-group">
                         <label for="backfillStartDate">Start Date</label>
                         <input type="date" id="backfillStartDate">
@@ -109,39 +123,45 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="backfillDelay">API Delay (sec)</label>
+                        <label for="backfillDelay">API Delay (seconds)</label>
                         <input type="number" id="backfillDelay" value="2" min="0.5" max="10" step="0.5">
                     </div>
                 </div>
-                <div class="form-actions">
-                    <button id="previewBackfillBtn" onclick="handlePreviewBackfill()">Preview</button>
-                    <button id="startBackfillBtn" onclick="handleStartBackfill()" disabled>Start Backfill</button>
-                    <button id="stopBackfillBtn" onclick="handleStopBackfill()" style="display: none;">Stop</button>
+
+                <div class="backfill-preview" id="backfillPreview">
+                    <div class="preview-header">
+                        <span class="preview-label">Preview</span>
+                    </div>
+                    <div class="preview-stats">
+                        <div class="preview-stat">
+                            <span class="stat-value" id="previewPeriods">-</span>
+                            <span class="stat-label">periods</span>
+                        </div>
+                        <div class="preview-stat">
+                            <span class="stat-value" id="previewTime">-</span>
+                            <span class="stat-label">estimated</span>
+                        </div>
+                    </div>
+                    <div class="preview-periods" id="previewPeriodsList"></div>
                 </div>
-            </div>
 
-            <div class="backfill-preview" id="backfillPreview" style="display: none;">
-                <h4>Preview</h4>
-                <p><strong>Periods:</strong> <span id="previewPeriods">-</span></p>
-                <p><strong>Estimated Time:</strong> <span id="previewTime">-</span></p>
-                <div class="preview-periods" id="previewPeriodsList"></div>
-            </div>
-
-            <div class="backfill-status" id="backfillStatus" style="display: none;">
-                <h4>Backfill Status</h4>
-                <div class="status-info">
-                    <p><strong>Progress:</strong> <span id="backfillProgress">-</span></p>
+                <div class="backfill-status" id="backfillStatus">
+                    <div class="status-header">
+                        <span class="status-label">Progress</span>
+                        <span class="status-value" id="backfillProgress">0/?</span>
+                    </div>
                     <div class="progress-bar">
                         <div class="progress-fill" id="progressFill"></div>
                     </div>
+                    <div class="status-results" id="backfillResults"></div>
                 </div>
-                <div class="status-results" id="backfillResults"></div>
             </div>
-        </section>
-
-        <footer>
-            <p>Data powered by GitHub and incident.io | Built with Render Workflows</p>
-        </footer>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="previewBackfillBtn">Preview</button>
+                <button class="btn btn-primary" id="startBackfillBtn" disabled>Start Backfill</button>
+                <button class="btn btn-danger" id="stopBackfillBtn" style="display: none;">Stop</button>
+            </div>
+        </div>
     </div>
 
     <script src="/js/api.js"></script>

@@ -49,6 +49,7 @@ header h1 {
     display: flex;
     gap: 0.75rem;
     align-items: center;
+    flex-wrap: wrap;
 }
 
 .controls select,
@@ -60,15 +61,25 @@ header h1 {
     color: var(--color-text);
     font-size: 0.875rem;
     cursor: pointer;
-}
-
-.controls button {
-    background-color: var(--color-high);
-    border-color: var(--color-high);
+    transition: all 0.2s;
 }
 
 .controls button:hover {
     opacity: 0.9;
+}
+
+.controls button#refreshBtn {
+    background-color: var(--color-high);
+    border-color: var(--color-high);
+}
+
+.controls button.btn-secondary {
+    background-color: transparent;
+    border-color: var(--color-border);
+}
+
+.controls button.btn-secondary:hover {
+    background-color: var(--color-card);
 }
 
 /* Metrics Cards */
@@ -244,36 +255,101 @@ footer {
     padding: 2rem;
 }
 
-/* Backfill Section */
-.backfill-section {
+/* ========== Modal Styles ========== */
+
+.modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.75);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+}
+
+.modal-overlay.active {
+    display: flex;
+}
+
+.modal {
     background-color: var(--color-card);
     border-radius: 0.75rem;
-    padding: 1.5rem;
     border: 1px solid var(--color-border);
-    margin-bottom: 2rem;
+    width: 100%;
+    max-width: 600px;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: modalSlideIn 0.2s ease-out;
 }
 
-.backfill-section h3 {
-    margin-bottom: 0.5rem;
-    font-size: 1rem;
-    font-weight: 500;
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
-.backfill-description {
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.modal-header h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.modal-close:hover {
+    color: var(--color-text);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.modal-description {
     color: var(--color-text-muted);
     font-size: 0.875rem;
     margin-bottom: 1.5rem;
+    line-height: 1.5;
 }
 
-.backfill-form {
-    margin-bottom: 1rem;
+.modal-footer {
+    display: flex;
+    gap: 0.75rem;
+    padding: 1.25rem 1.5rem;
+    border-top: 1px solid var(--color-border);
+    justify-content: flex-end;
 }
 
-.form-row {
+/* Form Styles */
+.form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
     gap: 1rem;
-    margin-bottom: 1rem;
+    margin-bottom: 1.5rem;
 }
 
 .form-group {
@@ -286,88 +362,129 @@ footer {
     font-size: 0.75rem;
     color: var(--color-text-muted);
     text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
 }
 
 .form-group input,
 .form-group select {
-    padding: 0.5rem;
+    padding: 0.625rem 0.75rem;
     border-radius: 0.375rem;
     border: 1px solid var(--color-border);
     background-color: var(--color-bg);
     color: var(--color-text);
     font-size: 0.875rem;
+    transition: border-color 0.2s;
 }
 
-.form-actions {
-    display: flex;
-    gap: 0.75rem;
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: var(--color-high);
 }
 
-.form-actions button {
-    padding: 0.5rem 1.25rem;
+/* Button Styles */
+.btn {
+    padding: 0.625rem 1.25rem;
     border-radius: 0.375rem;
-    border: 1px solid var(--color-border);
     font-size: 0.875rem;
+    font-weight: 500;
     cursor: pointer;
-    transition: opacity 0.2s;
+    transition: all 0.2s;
+    border: 1px solid transparent;
 }
 
-.form-actions button:disabled {
+.btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-#previewBackfillBtn {
-    background-color: var(--color-card);
-    color: var(--color-text);
-}
-
-#startBackfillBtn {
+.btn-primary {
     background-color: var(--color-elite);
+    color: white;
     border-color: var(--color-elite);
-    color: white;
 }
 
-#stopBackfillBtn {
+.btn-primary:hover:not(:disabled) {
+    background-color: #1ea550;
+}
+
+.btn-secondary {
+    background-color: transparent;
+    color: var(--color-text);
+    border-color: var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    background-color: var(--color-bg);
+}
+
+.btn-danger {
     background-color: var(--color-low);
-    border-color: var(--color-low);
     color: white;
+    border-color: var(--color-low);
 }
 
-.form-actions button:hover:not(:disabled) {
-    opacity: 0.9;
+.btn-danger:hover:not(:disabled) {
+    background-color: #dc2626;
 }
 
-.backfill-preview,
-.backfill-status {
-    margin-top: 1.5rem;
-    padding-top: 1.5rem;
-    border-top: 1px solid var(--color-border);
-}
-
-.backfill-preview h4,
-.backfill-status h4 {
-    font-size: 0.875rem;
+/* Backfill Preview */
+.backfill-preview {
+    display: none;
+    background-color: var(--color-bg);
+    border-radius: 0.5rem;
+    padding: 1rem;
     margin-bottom: 1rem;
-    color: var(--color-text-muted);
 }
 
-.backfill-preview p,
-.backfill-status p {
-    font-size: 0.875rem;
-    margin-bottom: 0.5rem;
+.backfill-preview.active {
+    display: block;
+}
+
+.preview-header {
+    margin-bottom: 0.75rem;
+}
+
+.preview-label {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+.preview-stats {
+    display: flex;
+    gap: 2rem;
+    margin-bottom: 1rem;
+}
+
+.preview-stat {
+    display: flex;
+    flex-direction: column;
+}
+
+.stat-value {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--color-elite);
+}
+
+.stat-label {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
 }
 
 .preview-periods {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-top: 1rem;
 }
 
 .period-chip {
     padding: 0.25rem 0.5rem;
-    background-color: var(--color-bg);
+    background-color: var(--color-card);
     border: 1px solid var(--color-border);
     border-radius: 0.25rem;
     font-size: 0.75rem;
@@ -380,16 +497,45 @@ footer {
     color: white;
 }
 
-.status-info {
-    margin-bottom: 1rem;
+/* Backfill Status */
+.backfill-status {
+    display: none;
+    background-color: var(--color-bg);
+    border-radius: 0.5rem;
+    padding: 1rem;
+}
+
+.backfill-status.active {
+    display: block;
+}
+
+.status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.status-label {
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 500;
+}
+
+.status-value {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--color-elite);
 }
 
 .progress-bar {
     height: 8px;
-    background-color: var(--color-bg);
+    background-color: var(--color-card);
     border-radius: 4px;
     overflow: hidden;
-    margin-top: 0.5rem;
+    margin-bottom: 1rem;
 }
 
 .progress-fill {
@@ -401,7 +547,7 @@ footer {
 }
 
 .status-results {
-    max-height: 200px;
+    max-height: 150px;
     overflow-y: auto;
 }
 
@@ -409,19 +555,38 @@ footer {
     display: flex;
     justify-content: space-between;
     padding: 0.5rem;
-    background-color: var(--color-bg);
+    background-color: var(--color-card);
     border-radius: 0.25rem;
     margin-bottom: 0.5rem;
     font-size: 0.75rem;
 }
 
+.result-period {
+    color: var(--color-text);
+}
+
+.result-stats {
+    color: var(--color-text-muted);
+}
+
 .result-complete {
-    padding: 1rem;
+    padding: 0.75rem;
     background-color: rgba(34, 197, 94, 0.1);
     border: 1px solid var(--color-elite);
     border-radius: 0.375rem;
     color: var(--color-elite);
     text-align: center;
+    font-size: 0.875rem;
+}
+
+.result-error {
+    padding: 0.75rem;
+    background-color: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--color-low);
+    border-radius: 0.375rem;
+    color: var(--color-low);
+    text-align: center;
+    font-size: 0.875rem;
 }
 
 /* Responsive */
@@ -437,19 +602,36 @@ footer {
 
     .controls {
         width: 100%;
-        flex-wrap: wrap;
     }
 
     .metric-value {
         font-size: 2rem;
     }
 
-    .form-row {
-        grid-template-columns: 1fr 1fr;
+    .form-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .modal {
+        max-height: 100vh;
+        border-radius: 0;
+    }
+
+    .preview-stats {
+        flex-direction: column;
+        gap: 1rem;
     }
 
     .result-item {
         flex-direction: column;
         gap: 0.25rem;
+    }
+
+    .modal-footer {
+        flex-direction: column;
+    }
+
+    .modal-footer .btn {
+        width: 100%;
     }
 }
