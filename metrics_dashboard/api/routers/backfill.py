@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from metrics_dashboard.backfill import generate_periods
-from metrics_dashboard.render_api import RenderAPIClient, RenderAPIError, create_render_client
+from metrics_dashboard.render_api import RenderAPIError, create_render_client
 
 router = APIRouter()
 
@@ -99,7 +99,7 @@ async def get_backfill_status() -> dict:
         }
 
     try:
-        run_status = await client.get_workflow_run(_current_run["run_id"])
+        run_status = await client.get_task_run(_current_run["run_id"])
         status = run_status.get("status", "unknown")
 
         if status in ("pending", "running"):
@@ -125,7 +125,7 @@ async def get_backfill_status() -> dict:
             }
         else:
             # Failed or cancelled
-            error_msg = run_status.get("error", f"Workflow {status}")
+            error_msg = f"Workflow {status}"
             run_info = _current_run
             _current_run = None
             return {
@@ -166,7 +166,7 @@ async def start_backfill(request: BackfillRequest) -> dict:
     if not client:
         raise HTTPException(
             status_code=503,
-            detail="Backfill not available: RENDER_API_KEY or RENDER_WORKFLOW_ID not configured. "
+            detail="Backfill not available: RENDER_API_KEY or RENDER_WORKFLOW_SLUG not configured. "
                    "Add these environment variables to the web service.",
         )
 
@@ -174,18 +174,19 @@ async def start_backfill(request: BackfillRequest) -> dict:
     periods = generate_periods(request.start_date, request.end_date, request.period_type)
 
     try:
-        # Trigger the workflow
-        result = await client.trigger_workflow(
+        # Trigger the workflow task
+        # Arguments are passed as a list in the same order as the task function signature
+        result = await client.run_task(
             task_name="run_backfill_pipeline",
-            parameters={
-                "start_date_iso": request.start_date.isoformat(),
-                "end_date_iso": request.end_date.isoformat(),
-                "period_type": request.period_type,
-                "delay_seconds": request.delay_seconds,
-            },
+            arguments=[
+                request.start_date.isoformat(),  # start_date_iso
+                request.end_date.isoformat(),    # end_date_iso
+                request.period_type,              # period_type
+                request.delay_seconds,            # delay_seconds
+            ],
         )
 
-        run_id = result.get("id") or result.get("runId")
+        run_id = result.get("run_id")
         _current_run = {
             "run_id": run_id,
             "started_at": datetime.utcnow().isoformat(),

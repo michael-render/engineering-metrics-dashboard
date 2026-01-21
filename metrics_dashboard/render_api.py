@@ -1,9 +1,10 @@
-"""Render API client for triggering workflows."""
+"""Render API client for triggering workflows.
+
+Uses the Render SDK to trigger workflow tasks.
+"""
 
 import os
 from typing import Any
-
-import httpx
 
 
 class RenderAPIError(Exception):
@@ -12,95 +13,107 @@ class RenderAPIError(Exception):
     pass
 
 
-class RenderAPIClient:
-    """Client for interacting with the Render API."""
+class RenderWorkflowClient:
+    """Client for triggering Render Workflow tasks."""
 
-    BASE_URL = "https://api.render.com/v1"
+    def __init__(
+        self,
+        api_key: str | None = None,
+        workflow_slug: str | None = None,
+    ):
+        """Initialize the client.
 
-    def __init__(self, api_key: str | None = None, workflow_id: str | None = None):
+        Args:
+            api_key: Render API key. Falls back to RENDER_API_KEY env var.
+            workflow_slug: Workflow slug (e.g., "my-workflow"). Falls back to RENDER_WORKFLOW_SLUG env var.
+        """
         self.api_key = api_key or os.environ.get("RENDER_API_KEY")
-        self.workflow_id = workflow_id or os.environ.get("RENDER_WORKFLOW_ID")
+        self.workflow_slug = workflow_slug or os.environ.get("RENDER_WORKFLOW_SLUG")
 
         if not self.api_key:
             raise RenderAPIError("RENDER_API_KEY not configured")
-        if not self.workflow_id:
-            raise RenderAPIError("RENDER_WORKFLOW_ID not configured")
+        if not self.workflow_slug:
+            raise RenderAPIError("RENDER_WORKFLOW_SLUG not configured")
 
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
-    async def trigger_workflow(
+    async def run_task(
         self,
         task_name: str,
-        parameters: dict[str, Any] | None = None,
+        arguments: list[Any] | None = None,
     ) -> dict:
-        """Trigger a workflow task.
+        """Run a workflow task.
 
         Args:
             task_name: Name of the task to run (e.g., "run_backfill_pipeline")
-            parameters: Parameters to pass to the task
+            arguments: List of arguments to pass to the task
 
         Returns:
-            Job info from Render API
+            Task run info including run_id
         """
-        url = f"{self.BASE_URL}/workflows/{self.workflow_id}/runs"
-
-        payload = {
-            "taskName": task_name,
-        }
-        if parameters:
-            payload["parameters"] = parameters
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                url,
-                json=payload,
-                headers=self.headers,
-                timeout=30.0,
+        try:
+            from render_sdk import Client
+        except ImportError:
+            raise RenderAPIError(
+                "render_sdk not installed. Add 'render-sdk' to requirements.txt"
             )
 
-            if response.status_code == 401:
-                raise RenderAPIError("Invalid RENDER_API_KEY")
-            if response.status_code == 404:
-                raise RenderAPIError(f"Workflow {self.workflow_id} not found")
-            if response.status_code >= 400:
-                raise RenderAPIError(f"Render API error: {response.status_code} - {response.text}")
+        # Task identifier is {workflow-slug}/{task-name}
+        task_identifier = f"{self.workflow_slug}/{task_name}"
 
-            return response.json()
+        try:
+            client = Client(api_key=self.api_key)
+            task_run = await client.workflows.run_task(
+                task_identifier,
+                arguments or [],
+            )
 
-    async def get_workflow_run(self, run_id: str) -> dict:
-        """Get status of a workflow run.
+            return {
+                "run_id": task_run.id,
+                "status": task_run.status,
+                "task_identifier": task_identifier,
+            }
+
+        except Exception as e:
+            raise RenderAPIError(f"Failed to run task: {e}")
+
+    async def get_task_run(self, run_id: str) -> dict:
+        """Get status of a task run.
 
         Args:
-            run_id: The workflow run ID
+            run_id: The task run ID (e.g., "trn-abc123...")
 
         Returns:
-            Run status from Render API
+            Task run status info
         """
-        url = f"{self.BASE_URL}/workflows/{self.workflow_id}/runs/{run_id}"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url,
-                headers=self.headers,
-                timeout=30.0,
+        try:
+            from render_sdk import Client
+        except ImportError:
+            raise RenderAPIError(
+                "render_sdk not installed. Add 'render-sdk' to requirements.txt"
             )
 
-            if response.status_code >= 400:
-                raise RenderAPIError(f"Render API error: {response.status_code} - {response.text}")
+        try:
+            client = Client(api_key=self.api_key)
+            task_run = await client.workflows.get_task_run(run_id)
 
-            return response.json()
+            return {
+                "run_id": task_run.id,
+                "status": task_run.status,
+                "created_at": task_run.created_at.isoformat() if task_run.created_at else None,
+                "started_at": task_run.started_at.isoformat() if task_run.started_at else None,
+                "finished_at": task_run.finished_at.isoformat() if task_run.finished_at else None,
+            }
+
+        except Exception as e:
+            raise RenderAPIError(f"Failed to get task run: {e}")
 
 
-def create_render_client() -> RenderAPIClient | None:
-    """Create a Render API client if configured.
+def create_render_client() -> RenderWorkflowClient | None:
+    """Create a Render workflow client if configured.
 
     Returns:
-        RenderAPIClient if configured, None otherwise
+        RenderWorkflowClient if configured, None otherwise
     """
     try:
-        return RenderAPIClient()
+        return RenderWorkflowClient()
     except RenderAPIError:
         return None
