@@ -410,7 +410,8 @@ async function checkBackfillStatus() {
 
             if (status.error) {
                 showBackfillError(status.error);
-            } else if (status.results && status.results.length > 0) {
+            } else if (status.render_status === 'succeeded' || status.progress === 'Complete') {
+                // Workflow completed successfully
                 showBackfillComplete(status);
                 refreshData();
             }
@@ -427,20 +428,29 @@ async function checkBackfillStatus() {
  * @param {Object} status - Status from API
  */
 function updateBackfillProgress(status) {
-    document.getElementById('backfillProgress').textContent = status.progress || '0/?';
+    const progressText = status.progress || 'Running...';
+    document.getElementById('backfillProgress').textContent = progressText;
 
-    // Parse progress for progress bar
-    const progressMatch = (status.progress || '0/1').match(/(\d+)\/(\d+)/);
+    // Parse progress for progress bar (if available)
+    const progressMatch = (status.progress || '').match(/(\d+)\/(\d+)/);
     if (progressMatch) {
         const current = parseInt(progressMatch[1]);
         const total = parseInt(progressMatch[2]);
         const percent = total > 0 ? (current / total) * 100 : 0;
         document.getElementById('progressFill').style.width = `${percent}%`;
+    } else {
+        // Indeterminate progress - show animated bar
+        document.getElementById('progressFill').style.width = '30%';
     }
 
-    // Show recent results
+    // Show workflow status message
     const resultsEl = document.getElementById('backfillResults');
-    if (status.results && status.results.length > 0) {
+    if (status.render_status) {
+        resultsEl.innerHTML = `<div class="result-item">
+            <span class="result-period">Workflow Status</span>
+            <span class="result-stats">${status.render_status}</span>
+        </div>`;
+    } else if (status.results && status.results.length > 0) {
         const recent = status.results.slice(-3).reverse();
         resultsEl.innerHTML = recent.map(r =>
             `<div class="result-item">
@@ -448,6 +458,11 @@ function updateBackfillProgress(status) {
                 <span class="result-stats">${r.deployments} deploys, ${r.pull_requests} PRs, ${r.incidents} incidents</span>
             </div>`
         ).join('');
+    } else {
+        resultsEl.innerHTML = `<div class="result-item">
+            <span class="result-period">Workflow running on Render</span>
+            <span class="result-stats">Check Render Dashboard for details</span>
+        </div>`;
     }
 }
 
@@ -457,7 +472,10 @@ function updateBackfillProgress(status) {
  */
 function showBackfillComplete(status) {
     const resultsEl = document.getElementById('backfillResults');
-    resultsEl.innerHTML = `<div class="result-complete">Backfill complete! Processed ${status.results.length} periods.</div>`;
+    const message = status.results && status.results.length > 0
+        ? `Backfill complete! Processed ${status.results.length} periods.`
+        : 'Backfill workflow completed successfully!';
+    resultsEl.innerHTML = `<div class="result-complete">${message}</div>`;
     document.getElementById('backfillProgress').textContent = 'Complete';
     document.getElementById('progressFill').style.width = '100%';
 }

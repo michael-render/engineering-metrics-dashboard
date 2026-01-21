@@ -367,3 +367,88 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
     print("=" * 60)
 
     return report_markdown
+
+
+# =============================================================================
+# Backfill Task - For historical data
+# =============================================================================
+
+
+@task
+async def run_backfill_pipeline(
+    start_date_iso: str,
+    end_date_iso: str,
+    period_type: str = "weekly",
+    delay_seconds: float = 2.0,
+) -> dict:
+    """Backfill historical metrics data for a date range.
+
+    This task fetches and stores data for multiple periods, processing them
+    sequentially with a delay between API calls to respect rate limits.
+
+    Args:
+        start_date_iso: Start date in ISO format (e.g., "2024-01-01T00:00:00Z")
+        end_date_iso: End date in ISO format (e.g., "2024-12-31T23:59:59Z")
+        period_type: Either "weekly" or "monthly"
+        delay_seconds: Delay between API calls for rate limiting
+
+    Returns:
+        Summary of backfill results
+    """
+    from metrics_dashboard.backfill import generate_periods, backfill_period
+
+    start_date = datetime.fromisoformat(start_date_iso.replace("Z", "+00:00"))
+    end_date = datetime.fromisoformat(end_date_iso.replace("Z", "+00:00"))
+
+    print("=" * 60)
+    print("Backfill Pipeline")
+    print("=" * 60)
+    print(f"Date range: {start_date.date()} to {end_date.date()}")
+    print(f"Period type: {period_type}")
+    print(f"Rate limit delay: {delay_seconds}s")
+    print()
+
+    periods = generate_periods(start_date, end_date, period_type)
+    total = len(periods)
+    print(f"Total periods to process: {total}")
+    print()
+
+    results = []
+    for i, period in enumerate(periods):
+        print(f"--- Processing period {i + 1}/{total} ---")
+        try:
+            result = await backfill_period(period, delay_seconds)
+            result["progress"] = f"{i + 1}/{total}"
+            results.append(result)
+            print(f"Completed: {result['deployments']} deployments, "
+                  f"{result['pull_requests']} PRs, {result['incidents']} incidents")
+        except Exception as e:
+            print(f"Error processing period: {e}")
+            results.append({
+                "period_start": period.start_date.isoformat(),
+                "period_end": period.end_date.isoformat(),
+                "error": str(e),
+                "progress": f"{i + 1}/{total}",
+            })
+
+        # Delay between periods (except for the last one)
+        if i < total - 1:
+            await asyncio.sleep(delay_seconds)
+
+        print()
+
+    print("=" * 60)
+    print("Backfill Complete")
+    print("=" * 60)
+    print(f"Processed {len(results)} periods")
+
+    successful = len([r for r in results if "error" not in r])
+    failed = len([r for r in results if "error" in r])
+    print(f"Successful: {successful}, Failed: {failed}")
+
+    return {
+        "total_periods": total,
+        "successful": successful,
+        "failed": failed,
+        "results": results,
+    }
