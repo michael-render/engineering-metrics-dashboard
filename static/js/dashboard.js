@@ -80,6 +80,12 @@ function initBackfillModal() {
     document.getElementById('previewBackfillBtn').addEventListener('click', handlePreviewBackfill);
     document.getElementById('startBackfillBtn').addEventListener('click', handleStartBackfill);
     document.getElementById('stopBackfillBtn').addEventListener('click', handleStopBackfill);
+
+    // Reset preview when parameters change
+    const formFields = ['backfillStartDate', 'backfillEndDate', 'backfillPeriodType', 'backfillDelay'];
+    formFields.forEach(id => {
+        document.getElementById(id).addEventListener('change', resetBackfillPreview);
+    });
 }
 
 /**
@@ -231,6 +237,15 @@ function showError(message) {
 }
 
 // ========== Backfill Functions ==========
+
+/**
+ * Reset backfill preview when parameters change
+ */
+function resetBackfillPreview() {
+    currentPreview = null;
+    document.getElementById('startBackfillBtn').disabled = true;
+    document.getElementById('backfillPreview').classList.remove('active');
+}
 
 /**
  * Handle preview backfill button click
