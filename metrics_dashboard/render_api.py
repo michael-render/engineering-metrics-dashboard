@@ -1,15 +1,10 @@
 """Render API client for triggering workflows.
 
-Uses the Render REST API directly via httpx.
+Uses the Render SDK to trigger workflow tasks.
 """
 
 import os
 from typing import Any
-
-import httpx
-
-
-RENDER_API_BASE = "https://api.render.com/v1"
 
 
 class RenderAPIError(Exception):
@@ -40,13 +35,6 @@ class RenderWorkflowClient:
         if not self.workflow_slug:
             raise RenderAPIError("RENDER_WORKFLOW_SLUG not configured")
 
-    def _headers(self) -> dict:
-        """Get headers for API requests."""
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-
     async def run_task(
         self,
         task_name: str,
@@ -61,32 +49,31 @@ class RenderWorkflowClient:
         Returns:
             Task run info including run_id
         """
+        try:
+            from render_sdk.client import Client
+        except ImportError:
+            raise RenderAPIError(
+                "render_sdk not installed. Add 'render_sdk' to requirements.txt"
+            )
+
         # Task identifier is {workflow-slug}/{task-name}
         task_identifier = f"{self.workflow_slug}/{task_name}"
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    f"{RENDER_API_BASE}/tasks",
-                    headers=self._headers(),
-                    json={
-                        "task": task_identifier,
-                        "input": arguments or [],
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
+        try:
+            client = Client(api_key=self.api_key)
+            task_run = await client.workflows.run_task(
+                task_identifier,
+                arguments or [],
+            )
 
-                return {
-                    "run_id": data.get("id"),
-                    "status": data.get("status"),
-                    "task_identifier": task_identifier,
-                }
+            return {
+                "run_id": task_run.id,
+                "status": task_run.status,
+                "task_identifier": task_identifier,
+            }
 
-            except httpx.HTTPStatusError as e:
-                raise RenderAPIError(f"API error {e.response.status_code}: {e.response.text}")
-            except Exception as e:
-                raise RenderAPIError(f"Failed to run task: {e}")
+        except Exception as e:
+            raise RenderAPIError(f"Failed to run task: {e}")
 
     async def get_task_run(self, run_id: str) -> dict:
         """Get status of a task run.
@@ -97,27 +84,27 @@ class RenderWorkflowClient:
         Returns:
             Task run status info
         """
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    f"{RENDER_API_BASE}/tasks/{run_id}",
-                    headers=self._headers(),
-                )
-                response.raise_for_status()
-                data = response.json()
+        try:
+            from render_sdk.client import Client
+        except ImportError:
+            raise RenderAPIError(
+                "render_sdk not installed. Add 'render_sdk' to requirements.txt"
+            )
 
-                return {
-                    "run_id": data.get("id"),
-                    "status": data.get("status"),
-                    "created_at": data.get("createdAt"),
-                    "started_at": data.get("startedAt"),
-                    "finished_at": data.get("finishedAt"),
-                }
+        try:
+            client = Client(api_key=self.api_key)
+            task_run = await client.workflows.get_task_run(run_id)
 
-            except httpx.HTTPStatusError as e:
-                raise RenderAPIError(f"API error {e.response.status_code}: {e.response.text}")
-            except Exception as e:
-                raise RenderAPIError(f"Failed to get task run: {e}")
+            return {
+                "run_id": task_run.id,
+                "status": task_run.status,
+                "created_at": task_run.created_at.isoformat() if task_run.created_at else None,
+                "started_at": task_run.started_at.isoformat() if task_run.started_at else None,
+                "finished_at": task_run.finished_at.isoformat() if task_run.finished_at else None,
+            }
+
+        except Exception as e:
+            raise RenderAPIError(f"Failed to get task run: {e}")
 
 
 def create_render_client() -> RenderWorkflowClient | None:
