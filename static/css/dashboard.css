@@ -375,6 +375,12 @@ footer {
     color: var(--color-text);
     font-size: 0.875rem;
     transition: border-color 0.2s;
+    color-scheme: dark;
+}
+
+/* Make date picker icons visible on dark background */
+.form-group input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
 }
 
 .form-group input:focus,
