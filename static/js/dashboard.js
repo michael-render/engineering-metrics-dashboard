@@ -6,6 +6,10 @@
 let currentPeriodType = 'weekly';
 let currentPeriods = 12;
 
+// Backfill state
+let backfillStatusInterval = null;
+let currentPreview = null;
+
 /**
  * Initialize the dashboard
  */
@@ -14,7 +18,7 @@ async function initDashboard() {
     currentPeriodType = document.getElementById('periodType').value;
     currentPeriods = parseInt(document.getElementById('periods').value);
 
-    // Add event listeners
+    // Add event listeners for dashboard controls
     document.getElementById('periodType').addEventListener('change', (e) => {
         currentPeriodType = e.target.value;
         refreshData();
@@ -25,8 +29,63 @@ async function initDashboard() {
         refreshData();
     });
 
+    document.getElementById('refreshBtn').addEventListener('click', () => {
+        refreshData();
+    });
+
     // Load initial data
     await refreshData();
+}
+
+/**
+ * Initialize backfill modal and form
+ */
+function initBackfillModal() {
+    const modal = document.getElementById('backfillModal');
+    const openBtn = document.getElementById('backfillBtn');
+    const closeBtn = document.getElementById('closeBackfillModal');
+
+    // Set default dates
+    const today = new Date();
+    const twoYearsAgo = new Date(today);
+    twoYearsAgo.setFullYear(today.getFullYear() - 2);
+
+    document.getElementById('backfillStartDate').value = twoYearsAgo.toISOString().split('T')[0];
+    document.getElementById('backfillEndDate').value = today.toISOString().split('T')[0];
+
+    // Modal open/close handlers
+    openBtn.addEventListener('click', () => {
+        modal.classList.add('active');
+        checkBackfillStatus();
+    });
+
+    closeBtn.addEventListener('click', () => {
+        modal.classList.remove('active');
+    });
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.classList.remove('active');
+        }
+    });
+
+    // Escape key to close
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && modal.classList.contains('active')) {
+            modal.classList.remove('active');
+        }
+    });
+
+    // Backfill action handlers
+    document.getElementById('previewBackfillBtn').addEventListener('click', handlePreviewBackfill);
+    document.getElementById('startBackfillBtn').addEventListener('click', handleStartBackfill);
+    document.getElementById('stopBackfillBtn').addEventListener('click', handleStopBackfill);
+
+    // Reset preview when parameters change
+    const formFields = ['backfillStartDate', 'backfillEndDate', 'backfillPeriodType', 'backfillDelay'];
+    formFields.forEach(id => {
+        document.getElementById(id).addEventListener('change', resetBackfillPreview);
+    });
 }
 
 /**
@@ -177,23 +236,15 @@ function showError(message) {
     document.getElementById('period-info').textContent = `Error: ${message}`;
 }
 
-// Backfill state
-let backfillStatusInterval = null;
-let currentPreview = null;
+// ========== Backfill Functions ==========
 
 /**
- * Initialize backfill form with default dates
+ * Reset backfill preview when parameters change
  */
-function initBackfillForm() {
-    const today = new Date();
-    const twoYearsAgo = new Date(today);
-    twoYearsAgo.setFullYear(today.getFullYear() - 2);
-
-    document.getElementById('backfillStartDate').value = twoYearsAgo.toISOString().split('T')[0];
-    document.getElementById('backfillEndDate').value = today.toISOString().split('T')[0];
-
-    // Check if there's a running backfill on page load
-    checkBackfillStatus();
+function resetBackfillPreview() {
+    currentPreview = null;
+    document.getElementById('startBackfillBtn').disabled = true;
+    document.getElementById('backfillPreview').classList.remove('active');
 }
 
 /**
@@ -238,15 +289,13 @@ async function handlePreviewBackfill() {
  * @param {Object} preview - Preview data from API
  */
 function showBackfillPreview(preview) {
-    document.getElementById('previewPeriods').textContent =
-        `${preview.total_periods} ${preview.period_type} periods`;
-    document.getElementById('previewTime').textContent =
-        `~${preview.estimated_minutes} minutes`;
+    document.getElementById('previewPeriods').textContent = preview.total_periods;
+    document.getElementById('previewTime').textContent = `~${preview.estimated_minutes} min`;
 
     const periodsList = document.getElementById('previewPeriodsList');
     periodsList.innerHTML = '';
 
-    preview.periods.forEach((p, i) => {
+    preview.periods.forEach((p) => {
         const start = new Date(p.start_date).toLocaleDateString();
         const end = new Date(p.end_date).toLocaleDateString();
         periodsList.innerHTML += `<span class="period-chip">${start} - ${end}</span>`;
@@ -256,7 +305,7 @@ function showBackfillPreview(preview) {
         periodsList.innerHTML += `<span class="period-chip more">+${preview.total_periods - preview.periods.length} more</span>`;
     }
 
-    document.getElementById('backfillPreview').style.display = 'block';
+    document.getElementById('backfillPreview').classList.add('active');
 }
 
 /**
@@ -315,7 +364,7 @@ function showBackfillRunning() {
     document.getElementById('previewBackfillBtn').disabled = true;
     document.getElementById('startBackfillBtn').style.display = 'none';
     document.getElementById('stopBackfillBtn').style.display = 'inline-block';
-    document.getElementById('backfillStatus').style.display = 'block';
+    document.getElementById('backfillStatus').classList.add('active');
 }
 
 /**
@@ -326,6 +375,7 @@ function showBackfillIdle() {
     document.getElementById('startBackfillBtn').style.display = 'inline-block';
     document.getElementById('startBackfillBtn').disabled = true;
     document.getElementById('stopBackfillBtn').style.display = 'none';
+    document.getElementById('backfillStatus').classList.remove('active');
     currentPreview = null;
 }
 
@@ -359,11 +409,10 @@ async function checkBackfillStatus() {
             }
 
             if (status.error) {
-                alert(`Backfill error: ${status.error}`);
+                showBackfillError(status.error);
             } else if (status.results && status.results.length > 0) {
-                // Just completed
                 showBackfillComplete(status);
-                refreshData(); // Refresh dashboard with new data
+                refreshData();
             }
 
             showBackfillIdle();
@@ -395,8 +444,8 @@ function updateBackfillProgress(status) {
         const recent = status.results.slice(-3).reverse();
         resultsEl.innerHTML = recent.map(r =>
             `<div class="result-item">
-                <span>${new Date(r.period_start).toLocaleDateString()} - ${new Date(r.period_end).toLocaleDateString()}</span>
-                <span>${r.deployments} deploys, ${r.pull_requests} PRs, ${r.incidents} incidents</span>
+                <span class="result-period">${new Date(r.period_start).toLocaleDateString()} - ${new Date(r.period_end).toLocaleDateString()}</span>
+                <span class="result-stats">${r.deployments} deploys, ${r.pull_requests} PRs, ${r.incidents} incidents</span>
             </div>`
         ).join('');
     }
@@ -413,8 +462,17 @@ function showBackfillComplete(status) {
     document.getElementById('progressFill').style.width = '100%';
 }
 
+/**
+ * Show backfill error message
+ * @param {string} error - Error message
+ */
+function showBackfillError(error) {
+    const resultsEl = document.getElementById('backfillResults');
+    resultsEl.innerHTML = `<div class="result-error">Error: ${error}</div>`;
+}
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', () => {
     initDashboard();
-    initBackfillForm();
+    initBackfillModal();
 });
