@@ -51,9 +51,13 @@ async def preview_backfill(
     """
     periods = generate_periods(start_date, end_date, period_type)
 
-    # Estimate time: ~30 API calls per period (repos * 2 for deployments + PRs)
-    # Plus delay between calls
-    estimated_calls_per_period = 60  # Conservative estimate
+    # Estimate time based on API calls per period:
+    # - 1 call to get repos
+    # - N calls for deployments (one per repo, assume ~10 repos)
+    # - N calls for PRs (one per repo)
+    # - 1 call for incidents
+    # Total: ~22 calls per period, round up to 25
+    estimated_calls_per_period = 25
     estimated_seconds = len(periods) * estimated_calls_per_period * delay_seconds
     estimated_minutes = estimated_seconds / 60
 
