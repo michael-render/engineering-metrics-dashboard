@@ -1,23 +1,20 @@
-"""Backfill API endpoints."""
+"""Backfill API endpoints.
 
-import asyncio
+Triggers Render Workflows for backfilling historical data.
+"""
+
 from datetime import datetime
 
-from fastapi import APIRouter, BackgroundTasks, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-from metrics_dashboard.backfill import generate_periods, run_backfill
+from metrics_dashboard.backfill import generate_periods
+from metrics_dashboard.render_api import RenderAPIClient, RenderAPIError, create_render_client
 
 router = APIRouter()
 
-# Track running backfill jobs
-_backfill_status: dict = {
-    "running": False,
-    "progress": None,
-    "results": [],
-    "error": None,
-}
+# Track the current backfill run
+_current_run: dict | None = None
 
 
 class BackfillRequest(BaseModel):
@@ -51,9 +48,13 @@ async def preview_backfill(
     """
     periods = generate_periods(start_date, end_date, period_type)
 
-    # Estimate time: ~30 API calls per period (repos * 2 for deployments + PRs)
-    # Plus delay between calls
-    estimated_calls_per_period = 60  # Conservative estimate
+    # Estimate time based on API calls per period:
+    # - 1 call to get repos
+    # - N calls for deployments (one per repo, assume ~10 repos)
+    # - N calls for PRs (one per repo)
+    # - 1 call for incidents
+    # Total: ~22 calls per period, round up to 25
+    estimated_calls_per_period = 25
     estimated_seconds = len(periods) * estimated_calls_per_period * delay_seconds
     estimated_minutes = estimated_seconds / 60
 
@@ -73,87 +74,152 @@ async def preview_backfill(
 
 @router.get("/status")
 async def get_backfill_status() -> dict:
-    """Get the current backfill job status."""
-    return _backfill_status
+    """Get the current backfill job status.
 
+    Checks status with Render API if a run is in progress.
+    """
+    global _current_run
 
-async def _run_backfill_job(
-    start_date: datetime,
-    end_date: datetime,
-    period_type: str,
-    delay_seconds: float,
-) -> None:
-    """Background task to run backfill."""
-    global _backfill_status
+    if not _current_run:
+        return {
+            "running": False,
+            "progress": None,
+            "results": [],
+            "error": None,
+        }
 
-    _backfill_status = {
-        "running": True,
-        "progress": "0/?",
-        "results": [],
-        "error": None,
-    }
+    # Check with Render API for current status
+    client = create_render_client()
+    if not client:
+        return {
+            "running": False,
+            "progress": None,
+            "results": [],
+            "error": "Render API not configured",
+        }
 
     try:
-        async for result in run_backfill(start_date, end_date, period_type, delay_seconds):
-            _backfill_status["progress"] = result.get("progress", "?")
-            _backfill_status["results"].append(result)
-    except Exception as e:
-        _backfill_status["error"] = str(e)
-    finally:
-        _backfill_status["running"] = False
+        run_status = await client.get_workflow_run(_current_run["run_id"])
+        status = run_status.get("status", "unknown")
+
+        if status in ("pending", "running"):
+            return {
+                "running": True,
+                "progress": _current_run.get("progress", "Running..."),
+                "results": [],
+                "error": None,
+                "run_id": _current_run["run_id"],
+                "render_status": status,
+            }
+        elif status == "succeeded":
+            # Clear the run since it's complete
+            run_info = _current_run
+            _current_run = None
+            return {
+                "running": False,
+                "progress": "Complete",
+                "results": [],
+                "error": None,
+                "run_id": run_info["run_id"],
+                "render_status": status,
+            }
+        else:
+            # Failed or cancelled
+            error_msg = run_status.get("error", f"Workflow {status}")
+            run_info = _current_run
+            _current_run = None
+            return {
+                "running": False,
+                "progress": None,
+                "results": [],
+                "error": error_msg,
+                "run_id": run_info["run_id"],
+                "render_status": status,
+            }
+    except RenderAPIError as e:
+        return {
+            "running": _current_run is not None,
+            "progress": _current_run.get("progress") if _current_run else None,
+            "results": [],
+            "error": str(e),
+        }
 
 
 @router.post("/start")
-async def start_backfill(
-    request: BackfillRequest,
-    background_tasks: BackgroundTasks,
-) -> dict:
-    """Start a backfill job in the background.
+async def start_backfill(request: BackfillRequest) -> dict:
+    """Start a backfill job by triggering a Render Workflow.
 
-    Use /status to monitor progress.
+    The workflow runs asynchronously. Use /status to monitor progress.
     """
-    global _backfill_status
+    global _current_run
 
-    if _backfill_status["running"]:
+    # Check if already running
+    if _current_run:
         return {
             "status": "error",
             "message": "A backfill job is already running",
-            "progress": _backfill_status["progress"],
+            "run_id": _current_run.get("run_id"),
         }
 
-    # Preview first
+    # Get Render API client
+    client = create_render_client()
+    if not client:
+        raise HTTPException(
+            status_code=503,
+            detail="Backfill not available: RENDER_API_KEY or RENDER_WORKFLOW_ID not configured. "
+                   "Add these environment variables to the web service.",
+        )
+
+    # Preview to get period count
     periods = generate_periods(request.start_date, request.end_date, request.period_type)
 
-    # Start background job
-    background_tasks.add_task(
-        _run_backfill_job,
-        request.start_date,
-        request.end_date,
-        request.period_type,
-        request.delay_seconds,
-    )
+    try:
+        # Trigger the workflow
+        result = await client.trigger_workflow(
+            task_name="run_backfill_pipeline",
+            parameters={
+                "start_date_iso": request.start_date.isoformat(),
+                "end_date_iso": request.end_date.isoformat(),
+                "period_type": request.period_type,
+                "delay_seconds": request.delay_seconds,
+            },
+        )
 
-    return {
-        "status": "started",
-        "total_periods": len(periods),
-        "message": f"Backfill started for {len(periods)} {request.period_type} periods",
-    }
+        run_id = result.get("id") or result.get("runId")
+        _current_run = {
+            "run_id": run_id,
+            "started_at": datetime.utcnow().isoformat(),
+            "total_periods": len(periods),
+            "progress": f"0/{len(periods)}",
+        }
+
+        return {
+            "status": "started",
+            "run_id": run_id,
+            "total_periods": len(periods),
+            "message": f"Backfill workflow started for {len(periods)} {request.period_type} periods",
+        }
+
+    except RenderAPIError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to trigger workflow: {e}")
 
 
 @router.post("/stop")
 async def stop_backfill() -> dict:
     """Request to stop the current backfill job.
 
-    Note: This is a soft stop - the current period will complete.
+    Note: Render Workflows cannot be stopped mid-run. This just clears our tracking.
     """
-    global _backfill_status
+    global _current_run
 
-    if not _backfill_status["running"]:
+    if not _current_run:
         return {"status": "not_running", "message": "No backfill job is running"}
 
-    # For now, just report status - true cancellation would need more infrastructure
+    run_id = _current_run.get("run_id")
+    _current_run = None
+
     return {
-        "status": "requested",
-        "message": "Stop requested. Current period will complete.",
-        "progress": _backfill_status["progress"],
+        "status": "cleared",
+        "message": "Backfill tracking cleared. Note: The workflow may still be running on Render.",
+        "run_id": run_id,
     }
