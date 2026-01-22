@@ -60,7 +60,7 @@ class RenderWorkflowClient:
         task_identifier = f"{self.workflow_slug}/{task_name}"
 
         try:
-            client = Client(api_key=self.api_key)
+            client = Client()
             task_run = await client.workflows.run_task(
                 task_identifier,
                 arguments or [],
@@ -92,7 +92,7 @@ class RenderWorkflowClient:
             )
 
         try:
-            client = Client(api_key=self.api_key)
+            client = Client()
             task_run = await client.workflows.get_task_run(run_id)
 
             return {
