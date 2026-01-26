@@ -45,7 +45,7 @@ services:
     name: trigger-weekly-metrics
     runtime: python
     schedule: "0 9 * * 1"  # Every Monday at 9 AM UTC
-    buildCommand: pip install httpx python-dotenv
+    buildCommand: pip install render_sdk httpx python-dotenv
     startCommand: python scripts/trigger_workflow.py weekly
     envVars:
       - key: PYTHON_VERSION
@@ -60,7 +60,7 @@ services:
     name: trigger-monthly-metrics
     runtime: python
     schedule: "0 9 1 * *"  # First day of each month at 9 AM UTC
-    buildCommand: pip install httpx python-dotenv
+    buildCommand: pip install render_sdk httpx python-dotenv
     startCommand: python scripts/trigger_workflow.py monthly
     envVars:
       - key: PYTHON_VERSION
