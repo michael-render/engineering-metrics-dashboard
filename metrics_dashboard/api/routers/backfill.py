@@ -9,9 +9,11 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from metrics_dashboard.backfill import generate_periods
+from metrics_dashboard.logging_config import get_logger
 from metrics_dashboard.render_api import RenderAPIError, create_render_client
 
 router = APIRouter()
+logger = get_logger("api.backfill")
 
 # Track the current backfill run
 _current_run: dict | None = None
@@ -164,10 +166,20 @@ async def start_backfill(request: BackfillRequest) -> dict:
     # Get Render API client
     client = create_render_client()
     if not client:
+        logger.warning(
+            "Backfill unavailable: Render API not configured",
+            extra={
+                "extra": {
+                    "endpoint": "/api/v1/backfill/start",
+                    "error_type": "configuration_error",
+                    "missing_config": ["RENDER_API_KEY", "RENDER_WORKFLOW_SLUG"],
+                }
+            },
+        )
         raise HTTPException(
             status_code=503,
             detail="Backfill not available: RENDER_API_KEY or RENDER_WORKFLOW_SLUG not configured. "
-                   "Add these environment variables to the web service.",
+            "Add these environment variables to the web service.",
         )
 
     # Preview to get period count
@@ -194,6 +206,20 @@ async def start_backfill(request: BackfillRequest) -> dict:
             "progress": f"0/{len(periods)}",
         }
 
+        logger.info(
+            f"Backfill workflow started: {run_id}",
+            extra={
+                "extra": {
+                    "endpoint": "/api/v1/backfill/start",
+                    "run_id": run_id,
+                    "total_periods": len(periods),
+                    "period_type": request.period_type,
+                    "start_date": request.start_date.isoformat(),
+                    "end_date": request.end_date.isoformat(),
+                }
+            },
+        )
+
         return {
             "status": "started",
             "run_id": run_id,
@@ -202,6 +228,24 @@ async def start_backfill(request: BackfillRequest) -> dict:
         }
 
     except RenderAPIError as e:
+        logger.error(
+            f"Failed to trigger backfill workflow: {e}",
+            exc_info=True,
+            extra={
+                "extra": {
+                    "endpoint": "/api/v1/backfill/start",
+                    "error_type": "render_api_error",
+                    "error_message": str(e),
+                    "request_params": {
+                        "start_date": request.start_date.isoformat(),
+                        "end_date": request.end_date.isoformat(),
+                        "period_type": request.period_type,
+                        "delay_seconds": request.delay_seconds,
+                    },
+                    "total_periods": len(periods),
+                }
+            },
+        )
         raise HTTPException(status_code=502, detail=f"Failed to trigger workflow: {e}")
 
 

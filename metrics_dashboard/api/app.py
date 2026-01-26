@@ -5,10 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from metrics_dashboard.api.routers import backfill, metrics, raw_data
+from metrics_dashboard.logging_config import configure_logging
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
+    # Initialize logging before anything else
+    configure_logging()
+
     app = FastAPI(
         title="Engineering Metrics API",
         description="DORA metrics and engineering data API",
