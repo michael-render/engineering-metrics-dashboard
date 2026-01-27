@@ -5,6 +5,7 @@ Subtasks called with asyncio.gather() execute in parallel.
 """
 
 import asyncio
+import logging
 import os
 import traceback
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,9 @@ from metrics_dashboard.reports import (
     generate_report,
     send_slack_notification,
 )
+
+# Configure logging for task execution visibility
+logger = logging.getLogger(__name__)
 
 
 def _check_env_vars(required: list[str], optional: list[str] | None = None) -> None:
@@ -348,81 +352,102 @@ async def run_metrics_pipeline(period_type: str = "weekly") -> str:
     Returns:
         The generated Markdown report
     """
-    print("=" * 60)
-    print("Engineering Metrics Pipeline")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Engineering Metrics Pipeline")
+    logger.info("=" * 60)
 
     period = _get_period(period_type)
     period_dict = period.model_dump(mode="json")
 
-    print(f"Report type: {period_type}")
-    print(f"Period: {period.start_date.date()} to {period.end_date.date()}")
-    print()
+    logger.info(f"Report type: {period_type}")
+    logger.info(f"Period: {period.start_date.date()} to {period.end_date.date()}")
 
     # -------------------------------------------------------------------------
     # Stage 1: EXTRACT - Fetch from all data sources IN PARALLEL
     # Each subtask runs in its own compute instance
     # -------------------------------------------------------------------------
-    print("--- Stage 1: Fetching data from all sources in parallel ---")
+    logger.info("--- Stage 1: Fetching data from all sources in parallel ---")
+    logger.info("[SUBTASK] Calling fetch_github_deployments")
+    logger.info("[SUBTASK] Calling fetch_github_pull_requests")
+    logger.info("[SUBTASK] Calling fetch_incidents")
 
-    deployments_json, prs_json, incidents_json = await asyncio.gather(
-        fetch_github_deployments(period_dict),
-        fetch_github_pull_requests(period_dict),
-        fetch_incidents(period_dict),
-    )
+    try:
+        deployments_json, prs_json, incidents_json = await asyncio.gather(
+            fetch_github_deployments(period_dict),
+            fetch_github_pull_requests(period_dict),
+            fetch_incidents(period_dict),
+        )
+    except Exception as e:
+        logger.error(f"[SUBTASK FAILED] Error in fetch stage: {e}", exc_info=True)
+        raise
 
-    print()
-    print(f"Fetched: {len(deployments_json)} deployments, {len(prs_json)} PRs, "
-          f"{len(incidents_json)} incidents")
-    print()
+    logger.info(f"[SUBTASK COMPLETE] Fetched: {len(deployments_json)} deployments, "
+                f"{len(prs_json)} PRs, {len(incidents_json)} incidents")
 
     # -------------------------------------------------------------------------
     # Stage 2: STORE RAW DATA - Persist to PostgreSQL
     # -------------------------------------------------------------------------
-    print("--- Stage 2: Storing raw data in database ---")
+    logger.info("--- Stage 2: Storing raw data in database ---")
+    logger.info("[SUBTASK] Calling store_raw_data")
 
-    storage_result = await store_raw_data(
-        deployments_json,
-        prs_json,
-        incidents_json,
-    )
-
-    print()
+    try:
+        storage_result = await store_raw_data(
+            deployments_json,
+            prs_json,
+            incidents_json,
+        )
+        logger.info(f"[SUBTASK COMPLETE] Storage result: {storage_result}")
+    except Exception as e:
+        logger.error(f"[SUBTASK FAILED] Error in store_raw_data: {e}", exc_info=True)
+        raise
 
     # -------------------------------------------------------------------------
     # Stage 3: TRANSFORM - Calculate DORA metrics
     # -------------------------------------------------------------------------
-    print("--- Stage 3: Calculating DORA metrics ---")
+    logger.info("--- Stage 3: Calculating DORA metrics ---")
+    logger.info("[SUBTASK] Calling calculate_metrics")
 
-    metrics_json = await calculate_metrics(
-        deployments_json,
-        prs_json,
-        incidents_json,
-        period_dict,
-    )
-
-    print()
+    try:
+        metrics_json = await calculate_metrics(
+            deployments_json,
+            prs_json,
+            incidents_json,
+            period_dict,
+        )
+        logger.info("[SUBTASK COMPLETE] Metrics calculated")
+    except Exception as e:
+        logger.error(f"[SUBTASK FAILED] Error in calculate_metrics: {e}", exc_info=True)
+        raise
 
     # -------------------------------------------------------------------------
     # Stage 4: STORE SNAPSHOT - Save metrics to PostgreSQL for historical tracking
     # -------------------------------------------------------------------------
-    print("--- Stage 4: Storing metrics snapshot ---")
+    logger.info("--- Stage 4: Storing metrics snapshot ---")
+    logger.info("[SUBTASK] Calling store_metrics_snapshot")
 
-    snapshot_id = await store_metrics_snapshot(metrics_json, period_dict)
-
-    print()
+    try:
+        snapshot_id = await store_metrics_snapshot(metrics_json, period_dict)
+        logger.info(f"[SUBTASK COMPLETE] Snapshot ID: {snapshot_id}")
+    except Exception as e:
+        logger.error(f"[SUBTASK FAILED] Error in store_metrics_snapshot: {e}", exc_info=True)
+        raise
 
     # -------------------------------------------------------------------------
     # Stage 5: LOAD - Generate report and notify
     # -------------------------------------------------------------------------
-    print("--- Stage 5: Generating report and sending notifications ---")
+    logger.info("--- Stage 5: Generating report and sending notifications ---")
+    logger.info("[SUBTASK] Calling generate_and_notify")
 
-    report_markdown = await generate_and_notify(metrics_json)
+    try:
+        report_markdown = await generate_and_notify(metrics_json)
+        logger.info("[SUBTASK COMPLETE] Report generated")
+    except Exception as e:
+        logger.error(f"[SUBTASK FAILED] Error in generate_and_notify: {e}", exc_info=True)
+        raise
 
-    print()
-    print("=" * 60)
-    print("Pipeline Complete")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("Pipeline Complete")
+    logger.info("=" * 60)
 
     return report_markdown
 
@@ -453,35 +478,37 @@ async def run_backfill_pipeline(
     Returns:
         Summary of backfill results
     """
+    logger.info("=" * 60)
+    logger.info("Backfill Pipeline - Starting")
+    logger.info("=" * 60)
+
+    # Validate required env vars for backfill
+    _check_env_vars(["DATABASE_URL", "GITHUB_TOKEN", "GITHUB_ORG"])
+
     from metrics_dashboard.backfill import generate_periods, backfill_period
 
     start_date = datetime.fromisoformat(start_date_iso.replace("Z", "+00:00"))
     end_date = datetime.fromisoformat(end_date_iso.replace("Z", "+00:00"))
 
-    print("=" * 60)
-    print("Backfill Pipeline")
-    print("=" * 60)
-    print(f"Date range: {start_date.date()} to {end_date.date()}")
-    print(f"Period type: {period_type}")
-    print(f"Rate limit delay: {delay_seconds}s")
-    print()
+    logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
+    logger.info(f"Period type: {period_type}")
+    logger.info(f"Rate limit delay: {delay_seconds}s")
 
     periods = generate_periods(start_date, end_date, period_type)
     total = len(periods)
-    print(f"Total periods to process: {total}")
-    print()
+    logger.info(f"Total periods to process: {total}")
 
     results = []
     for i, period in enumerate(periods):
-        print(f"--- Processing period {i + 1}/{total} ---")
+        logger.info(f"--- Processing period {i + 1}/{total} ---")
         try:
             result = await backfill_period(period, delay_seconds)
             result["progress"] = f"{i + 1}/{total}"
             results.append(result)
-            print(f"Completed: {result['deployments']} deployments, "
-                  f"{result['pull_requests']} PRs, {result['incidents']} incidents")
+            logger.info(f"Completed: {result['deployments']} deployments, "
+                        f"{result['pull_requests']} PRs, {result['incidents']} incidents")
         except Exception as e:
-            print(f"Error processing period: {e}")
+            logger.error(f"Error processing period: {e}", exc_info=True)
             results.append({
                 "period_start": period.start_date.isoformat(),
                 "period_end": period.end_date.isoformat(),
@@ -493,16 +520,13 @@ async def run_backfill_pipeline(
         if i < total - 1:
             await asyncio.sleep(delay_seconds)
 
-        print()
-
-    print("=" * 60)
-    print("Backfill Complete")
-    print("=" * 60)
-    print(f"Processed {len(results)} periods")
+    logger.info("=" * 60)
+    logger.info("Backfill Complete")
+    logger.info("=" * 60)
 
     successful = len([r for r in results if "error" not in r])
     failed = len([r for r in results if "error" in r])
-    print(f"Successful: {successful}, Failed: {failed}")
+    logger.info(f"Processed {len(results)} periods - Successful: {successful}, Failed: {failed}")
 
     return {
         "total_periods": total,
