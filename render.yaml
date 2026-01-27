@@ -5,7 +5,7 @@
 # To deploy the workflow:
 #   1. Go to Render Dashboard > New > Workflow
 #   2. Link this repository
-#   3. Set Build Command: pip install -r requirements.txt
+#   3. Set Build Command: pip install uv && uv sync --frozen --no-install-project
 #   4. Set Start Command: python main.py
 #   5. Configure environment variables (including DATABASE_URL from the database below)
 #
@@ -25,7 +25,7 @@ services:
     name: metrics-dashboard-web
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt && alembic upgrade head
+    buildCommand: pip install uv && uv sync --frozen --no-install-project && alembic upgrade head
     startCommand: uvicorn api_main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
@@ -45,7 +45,7 @@ services:
     name: trigger-weekly-metrics
     runtime: python
     schedule: "0 9 * * 1"  # Every Monday at 9 AM UTC
-    buildCommand: pip install render_sdk httpx python-dotenv
+    buildCommand: pip install uv && uv sync --frozen --no-install-project
     startCommand: python scripts/trigger_workflow.py weekly
     envVars:
       - key: PYTHON_VERSION
@@ -60,7 +60,7 @@ services:
     name: trigger-monthly-metrics
     runtime: python
     schedule: "0 9 1 * *"  # First day of each month at 9 AM UTC
-    buildCommand: pip install render_sdk httpx python-dotenv
+    buildCommand: pip install uv && uv sync --frozen --no-install-project
     startCommand: python scripts/trigger_workflow.py monthly
     envVars:
       - key: PYTHON_VERSION
