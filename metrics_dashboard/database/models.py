@@ -21,7 +21,7 @@ class DeploymentRecord(Base):
     github_deployment_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     sha: Mapped[str] = mapped_column(String(40))
     ref: Mapped[str] = mapped_column(String(255))
-    environment: Mapped[str] = mapped_column(String(100), index=True)
+    environment: Mapped[str] = mapped_column(String(255), index=True)
     status: Mapped[str] = mapped_column(String(20), index=True)  # success, failure, pending, in_progress
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     fetched_at: Mapped[datetime] = mapped_column(
