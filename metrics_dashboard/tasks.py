@@ -466,14 +466,14 @@ async def run_backfill_pipeline(
 ) -> dict:
     """Backfill historical metrics data for a date range.
 
-    This task fetches and stores data for multiple periods, processing them
-    sequentially with a delay between API calls to respect rate limits.
+    Reuses the same task functions as run_metrics_pipeline but processes
+    periods sequentially with delays to respect rate limits.
 
     Args:
         start_date_iso: Start date in ISO format (e.g., "2024-01-01T00:00:00Z")
         end_date_iso: End date in ISO format (e.g., "2024-12-31T23:59:59Z")
         period_type: Either "weekly" or "monthly"
-        delay_seconds: Delay between API calls for rate limiting
+        delay_seconds: Delay between periods for rate limiting
 
     Returns:
         Summary of backfill results
@@ -482,17 +482,15 @@ async def run_backfill_pipeline(
     logger.info("Backfill Pipeline - Starting")
     logger.info("=" * 60)
 
-    # Validate required env vars for backfill
     _check_env_vars(["DATABASE_URL", "GITHUB_TOKEN", "GITHUB_ORG"])
 
-    from metrics_dashboard.backfill import generate_periods, backfill_period
+    from metrics_dashboard.backfill import generate_periods
 
     start_date = datetime.fromisoformat(start_date_iso.replace("Z", "+00:00"))
     end_date = datetime.fromisoformat(end_date_iso.replace("Z", "+00:00"))
 
     logger.info(f"Date range: {start_date.date()} to {end_date.date()}")
     logger.info(f"Period type: {period_type}")
-    logger.info(f"Rate limit delay: {delay_seconds}s")
 
     periods = generate_periods(start_date, end_date, period_type)
     total = len(periods)
@@ -500,13 +498,35 @@ async def run_backfill_pipeline(
 
     results = []
     for i, period in enumerate(periods):
-        logger.info(f"--- Processing period {i + 1}/{total} ---")
+        period_dict = period.model_dump(mode="json")
+        logger.info(f"--- Processing period {i + 1}/{total}: {period.start_date.date()} to {period.end_date.date()} ---")
+
         try:
-            result = await backfill_period(period, delay_seconds)
-            result["progress"] = f"{i + 1}/{total}"
+            # Fetch data (reusing same task functions as run_metrics_pipeline)
+            deployments_json = await fetch_github_deployments(period_dict)
+            prs_json = await fetch_github_pull_requests(period_dict)
+            incidents_json = await fetch_incidents(period_dict)
+
+            # Store raw data
+            storage_result = await store_raw_data(deployments_json, prs_json, incidents_json)
+
+            # Calculate and store metrics
+            metrics_json = await calculate_metrics(deployments_json, prs_json, incidents_json, period_dict)
+            snapshot_id = await store_metrics_snapshot(metrics_json, period_dict)
+
+            result = {
+                "period_start": period.start_date.isoformat(),
+                "period_end": period.end_date.isoformat(),
+                "deployments": storage_result["deployments_stored"],
+                "pull_requests": storage_result["pull_requests_stored"],
+                "incidents": storage_result["incidents_stored"],
+                "snapshot_id": snapshot_id,
+                "progress": f"{i + 1}/{total}",
+            }
             results.append(result)
             logger.info(f"Completed: {result['deployments']} deployments, "
                         f"{result['pull_requests']} PRs, {result['incidents']} incidents")
+
         except Exception as e:
             logger.error(f"Error processing period: {e}", exc_info=True)
             results.append({
