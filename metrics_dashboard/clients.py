@@ -16,9 +16,10 @@ from metrics_dashboard.models import (
 class GitHubClient:
     """Client for GitHub API."""
 
-    def __init__(self, token: str, org: str):
+    def __init__(self, token: str, org: str, repos: list[str] | None = None):
         self.token = token
         self.org = org
+        self.configured_repos = repos
         self.base_url = "https://api.github.com"
         self.headers = {
             "Authorization": f"Bearer {token}",
@@ -27,7 +28,15 @@ class GitHubClient:
         }
 
     async def get_repos(self) -> list[str]:
-        """Get all non-archived repos in the organization with pagination."""
+        """Get repos to track.
+
+        If GITHUB_REPOS is configured, returns that list.
+        Otherwise, fetches all non-archived repos in the organization.
+        """
+        if self.configured_repos:
+            print(f"[GitHub] Using configured repos: {', '.join(self.configured_repos)}")
+            return self.configured_repos
+
         repos: list[str] = []
         page = 1
 
@@ -53,7 +62,7 @@ class GitHubClient:
 
                 page += 1
 
-        print(f"[GitHub] Found {len(repos)} repos in {self.org}")
+        print(f"[GitHub] Found {len(repos)} repos in {self.org} (set GITHUB_REPOS to filter)")
         return repos
 
     async def get_deployments(
@@ -71,6 +80,9 @@ class GitHubClient:
                     headers=self.headers,
                     params={"per_page": 100, "page": page},
                 )
+                # 404 means repo doesn't use GitHub Deployments - this is expected
+                if response.status_code == 404:
+                    return []
                 response.raise_for_status()
                 page_deployments = response.json()
 
@@ -379,14 +391,24 @@ class IncidentIOClient:
 
 
 def create_github_client() -> GitHubClient:
-    """Create GitHub client from environment variables."""
+    """Create GitHub client from environment variables.
+
+    Environment variables:
+        GITHUB_TOKEN: Required. GitHub API token.
+        GITHUB_ORG: Required. GitHub organization name.
+        GITHUB_REPOS: Optional. Comma-separated list of repo names to track.
+                      If not set, tracks all non-archived repos in the org.
+    """
     token = os.environ.get("GITHUB_TOKEN")
     org = os.environ.get("GITHUB_ORG")
 
     if not token or not org:
         raise ValueError("GITHUB_TOKEN and GITHUB_ORG environment variables are required")
 
-    return GitHubClient(token, org)
+    repos_str = os.environ.get("GITHUB_REPOS")
+    repos = [r.strip() for r in repos_str.split(",") if r.strip()] if repos_str else None
+
+    return GitHubClient(token, org, repos)
 
 
 def create_incident_io_client() -> IncidentIOClient | None:
