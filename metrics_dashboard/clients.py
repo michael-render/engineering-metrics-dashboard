@@ -71,6 +71,9 @@ class GitHubClient:
                     headers=self.headers,
                     params={"per_page": 100, "page": page},
                 )
+                # 404 is expected for repos that don't use GitHub Deployments
+                if response.status_code == 404:
+                    return []
                 response.raise_for_status()
                 page_deployments = response.json()
 
@@ -93,8 +96,11 @@ class GitHubClient:
                         headers=self.headers,
                         params={"per_page": 1},
                     )
-                    status_response.raise_for_status()
-                    statuses = status_response.json()
+                    if status_response.status_code == 404:
+                        statuses = []
+                    else:
+                        status_response.raise_for_status()
+                        statuses = status_response.json()
 
                     status = "pending"
                     if statuses:
