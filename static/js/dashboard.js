@@ -290,7 +290,16 @@ async function handlePreviewBackfill() {
  */
 function showBackfillPreview(preview) {
     document.getElementById('previewPeriods').textContent = preview.total_periods;
-    document.getElementById('previewTime').textContent = `~${preview.estimated_minutes} min`;
+
+    // Format time estimate - show hours if over 60 minutes
+    let timeEstimate;
+    if (preview.estimated_minutes >= 60) {
+        const hours = (preview.estimated_minutes / 60).toFixed(1);
+        timeEstimate = `~${hours} hrs`;
+    } else {
+        timeEstimate = `~${preview.estimated_minutes} min`;
+    }
+    document.getElementById('previewTime').textContent = timeEstimate;
 
     const periodsList = document.getElementById('previewPeriodsList');
     periodsList.innerHTML = '';
